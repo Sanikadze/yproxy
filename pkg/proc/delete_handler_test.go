@@ -1,6 +1,7 @@
 package proc_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,10 +31,10 @@ func TestFilesToDeletion(t *testing.T) {
 		{Path: "some_trash"},
 	}
 	storage := mock.NewMockStorageInteractor(ctrl)
-	storage.EXPECT().ListBucketPath("", msg.Name, true).Return(filesInStorage, nil)
+	storage.EXPECT().ListBucketPath(gomock.Any(), "", msg.Name, true).Return(filesInStorage, nil)
 
 	backup := mock.NewMockBackupInterractor(ctrl)
-	backup.EXPECT().GetFirstLSN(msg.Segnum).Return(uint64(1337), nil)
+	backup.EXPECT().GetFirstLSN(gomock.Any(), msg.Segnum).Return(uint64(1337), nil)
 
 	vi := map[string]bool{
 		"1663_16530_not-deleted_18002_":               true,
@@ -55,7 +56,7 @@ func TestFilesToDeletion(t *testing.T) {
 		Cnf:                &config.Vacuum{CheckBackup: true},
 	}
 
-	list, err := handler.ListGarbageFiles("", msg)
+	list, err := handler.ListGarbageFiles(context.Background(), "", msg)
 
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(list))

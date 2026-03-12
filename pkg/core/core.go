@@ -140,7 +140,7 @@ func (i *Instance) Run(instanceCnf *config.Instance) error {
 	}
 
 	if instanceCnf.MetricsPort != 0 {
-		metricsAddr := fmt.Sprintf("[::1]:%d", instanceCnf.MetricsPort)
+		metricsAddr := fmt.Sprintf("127.0.0.1:%d", instanceCnf.MetricsPort)
 		mws = metrics.NewMetricsWebServer(metricsAddr)
 		if err := mws.Serve(); err != nil {
 			ylogger.Zero.Error().Err(err).Msg("failed to start metrics server")
@@ -155,6 +155,12 @@ func (i *Instance) Run(instanceCnf *config.Instance) error {
 	bs, err := storage.NewStorage(&instanceCnf.BackupStorageCnf, "backup")
 	if err != nil {
 		return err
+	}
+
+	// Start S3 health check if using S3 storage
+	if instanceCnf.StorageCnf.StorageType == "s3" {
+		healthPool := storage.NewSessionPool(&instanceCnf.StorageCnf, "")
+		go storage.RunHealthCheck(ctx, healthPool, &instanceCnf.StorageCnf, 30*time.Second)
 	}
 
 	if instanceCnf.PsqlPort != 0 {

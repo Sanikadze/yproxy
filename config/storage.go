@@ -1,6 +1,9 @@
 package config
 
-import "net/url"
+import (
+	"net/url"
+	"time"
+)
 
 type Crypto struct {
 	GPGKeyId   string `json:"gpg_key_id" toml:"gpg_key_id" yaml:"gpg_key_id"`
@@ -38,6 +41,15 @@ type Storage struct {
 	EndpointSourceHost   string `json:"storage_endpoint_source_host" toml:"storage_endpoint_source_host" yaml:"storage_endpoint_source_host"`
 	EndpointSourcePort   string `json:"storage_endpoint_source_port" toml:"storage_endpoint_source_port" yaml:"storage_endpoint_source_port"`
 	EndpointSourceScheme string `json:"storage_endpoint_source_scheme" toml:"storage_endpoint_source_scheme" yaml:"storage_endpoint_source_scheme"`
+
+	// S3 HTTP transport timeouts
+	S3DialTimeout           time.Duration `json:"s3_dial_timeout" toml:"s3_dial_timeout" yaml:"s3_dial_timeout"`
+	S3ResponseHeaderTimeout time.Duration `json:"s3_response_header_timeout" toml:"s3_response_header_timeout" yaml:"s3_response_header_timeout"`
+	S3IdleConnTimeout       time.Duration `json:"s3_idle_conn_timeout" toml:"s3_idle_conn_timeout" yaml:"s3_idle_conn_timeout"`
+
+	// S3 operation-level timeouts (context deadlines)
+	S3OperationTimeout time.Duration `json:"s3_operation_timeout" toml:"s3_operation_timeout" yaml:"s3_operation_timeout"` // metadata ops: list, delete, head, copy
+	S3StreamTimeout    time.Duration `json:"s3_stream_timeout" toml:"s3_stream_timeout" yaml:"s3_stream_timeout"`          // streaming ops: get, put
 }
 
 func (s Storage) ID() string {

@@ -1,6 +1,7 @@
 package proc
 
 import (
+	"context"
 	"fmt"
 	"path"
 	"strings"
@@ -18,9 +19,9 @@ import (
 
 //go:generate mockgen -destination=../../../test/mocks/mock_object.go -package mocks -build_flags -mod=readonly github.com/wal-g/wal-g/pkg/storages/storage Object
 type GarbageMgr interface {
-	HandleDeleteGarbage(message.DeleteMessage) error
-	HandleDeleteFile(message.DeleteMessage) error
-	HandleUntrashifyFile(message.UntrashifyMessage) error
+	HandleDeleteGarbage(ctx context.Context, msg message.DeleteMessage) error
+	HandleDeleteFile(ctx context.Context, msg message.DeleteMessage) error
+	HandleUntrashifyFile(ctx context.Context, msg message.UntrashifyMessage) error
 }
 
 type BasicGarbageMgr struct {
@@ -61,10 +62,10 @@ func RegPathFromTrasnPath(p string, segnum int) string {
 }
 
 // HandleUntrashifyFile implements GarbageMgr.
-func (dh *BasicGarbageMgr) HandleUntrashifyFile(msg message.UntrashifyMessage) error {
+func (dh *BasicGarbageMgr) HandleUntrashifyFile(ctx context.Context, msg message.UntrashifyMessage) error {
 
 	ylogger.Zero.Info().Str("path", msg.Name).Msg("listing prefix")
-	objectMetas, err := dh.StorageInterractor.ListPath(msg.Name, true, nil)
+	objectMetas, err := dh.StorageInterractor.ListPath(ctx, msg.Name, true, nil)
 	if err != nil {
 		return errors.Wrap(err, "could not list objects")
 	}
@@ -80,7 +81,7 @@ func (dh *BasicGarbageMgr) HandleUntrashifyFile(msg message.UntrashifyMessage) e
 	for _, file := range objectMetas {
 		tp := RegPathFromTrasnPath(file.Path, int(msg.Segnum))
 		/* XXX: fix this */
-		err = dh.StorageInterractor.MoveObject(dh.StorageInterractor.DefaultBucket(), file.Path, tp)
+		err = dh.StorageInterractor.MoveObject(ctx, dh.StorageInterractor.DefaultBucket(), file.Path, tp)
 		if err != nil {
 			return err
 		}
@@ -89,12 +90,12 @@ func (dh *BasicGarbageMgr) HandleUntrashifyFile(msg message.UntrashifyMessage) e
 	return nil
 }
 
-func (dh *BasicGarbageMgr) DeleteGarbageInBucket(bucket string, msg message.DeleteMessage) error {
-	fileList, err := dh.ListGarbageFiles(bucket, msg)
+func (dh *BasicGarbageMgr) DeleteGarbageInBucket(ctx context.Context, bucket string, msg message.DeleteMessage) error {
+	fileList, err := dh.ListGarbageFiles(ctx, bucket, msg)
 	if err != nil {
 		return errors.Wrap(err, "failed to delete file")
 	}
-	uploads, err := dh.StorageInterractor.ListFailedMultipartUploads(bucket)
+	uploads, err := dh.StorageInterractor.ListFailedMultipartUploads(ctx, bucket)
 	if err != nil {
 		return err
 	}
@@ -120,10 +121,10 @@ func (dh *BasicGarbageMgr) DeleteGarbageInBucket(bucket string, msg message.Dele
 
 			if msg.CrazyDrop {
 				ylogger.Zero.Info().Str("bucket", bucket).Str("path", fileList[i]).Msg("simply delete without any 'plan B'")
-				err = dh.StorageInterractor.DeleteObject(bucket, fileList[i])
+				err = dh.StorageInterractor.DeleteObject(ctx, bucket, fileList[i])
 			} else {
 				tp := TrashPathFromRegPath(fileList[i], int(msg.Segnum))
-				err = dh.StorageInterractor.MoveObject(bucket, fileList[i], tp)
+				err = dh.StorageInterractor.MoveObject(ctx, bucket, fileList[i], tp)
 			}
 			if err != nil {
 				ylogger.Zero.Warn().AnErr("err", err).Str("bucket", bucket).Str("file", fileList[i]).Msg("failed to obsolete file")
@@ -141,7 +142,7 @@ func (dh *BasicGarbageMgr) DeleteGarbageInBucket(bucket string, msg message.Dele
 	}
 
 	for key, uploadId := range uploads {
-		if err := dh.StorageInterractor.AbortMultipartUpload(bucket, key, uploadId); err != nil {
+		if err := dh.StorageInterractor.AbortMultipartUpload(ctx, bucket, key, uploadId); err != nil {
 			return err
 		}
 	}
@@ -149,21 +150,21 @@ func (dh *BasicGarbageMgr) DeleteGarbageInBucket(bucket string, msg message.Dele
 	return nil
 }
 
-func (dh *BasicGarbageMgr) HandleDeleteGarbage(msg message.DeleteMessage) error {
+func (dh *BasicGarbageMgr) HandleDeleteGarbage(ctx context.Context, msg message.DeleteMessage) error {
 	for _, b := range dh.StorageInterractor.ListBuckets() {
-		if err := dh.DeleteGarbageInBucket(b, msg); err != nil {
+		if err := dh.DeleteGarbageInBucket(ctx, b, msg); err != nil {
 			return err
 		}
 	}
 	return nil
 }
-func (dh *BasicGarbageMgr) ListDelete2Files(bucket string, msg message.Delete2Message) ([]*object.ObjectInfo, error) {
+func (dh *BasicGarbageMgr) ListDelete2Files(ctx context.Context, bucket string, msg message.Delete2Message) ([]*object.ObjectInfo, error) {
 	//get first backup lsn
 	var err error
 
 	//list files in storage
 	ylogger.Zero.Info().Str("path", msg.Prefix).Msg("listing prefix")
-	objectMetas, err := dh.StorageInterractor.ListBucketPath(bucket, msg.Prefix, true)
+	objectMetas, err := dh.StorageInterractor.ListBucketPath(ctx, bucket, msg.Prefix, true)
 	if err != nil {
 		return nil, errors.Wrap(err, "could not list objects")
 	}
@@ -183,12 +184,12 @@ func (dh *BasicGarbageMgr) ListDelete2Files(bucket string, msg message.Delete2Me
 	return filesToDelete, nil
 }
 
-func (dh *BasicGarbageMgr) DeletePrefixInBucket(bucket string, msg message.Delete2Message) error {
-	fileList, err := dh.ListDelete2Files(bucket, msg)
+func (dh *BasicGarbageMgr) DeletePrefixInBucket(ctx context.Context, bucket string, msg message.Delete2Message) error {
+	fileList, err := dh.ListDelete2Files(ctx, bucket, msg)
 	if err != nil {
 		return errors.Wrap(err, "failed to delete file")
 	}
-	uploads, err := dh.StorageInterractor.ListFailedMultipartUploads(bucket)
+	uploads, err := dh.StorageInterractor.ListFailedMultipartUploads(ctx, bucket)
 	if err != nil {
 		return err
 	}
@@ -223,7 +224,7 @@ func (dh *BasicGarbageMgr) DeletePrefixInBucket(bucket string, msg message.Delet
 
 			} else if strings.Contains(fileList[i].Path, "trash") && fileList[i].LastMod.Add(time.Hour*24*7).Unix() < time.Now().Unix() {
 				ylogger.Zero.Info().Str("bucket", bucket).Str("path", fileList[i].Path).Msg("simply delete without any 'plan B'")
-				err = dh.StorageInterractor.DeleteObject(bucket, fileList[i].Path)
+				err = dh.StorageInterractor.DeleteObject(ctx, bucket, fileList[i].Path)
 
 			}
 			if err != nil {
@@ -242,7 +243,7 @@ func (dh *BasicGarbageMgr) DeletePrefixInBucket(bucket string, msg message.Delet
 	}
 
 	for key, uploadId := range uploads {
-		if err := dh.StorageInterractor.AbortMultipartUpload(bucket, key, uploadId); err != nil {
+		if err := dh.StorageInterractor.AbortMultipartUpload(ctx, bucket, key, uploadId); err != nil {
 			return err
 		}
 	}
@@ -250,20 +251,20 @@ func (dh *BasicGarbageMgr) DeletePrefixInBucket(bucket string, msg message.Delet
 	return nil
 }
 
-func (dh *BasicGarbageMgr) HandleDelete2Prefix(msg message.Delete2Message) error {
+func (dh *BasicGarbageMgr) HandleDelete2Prefix(ctx context.Context, msg message.Delete2Message) error {
 	for _, b := range dh.StorageInterractor.ListBuckets() {
-		if err := dh.DeletePrefixInBucket(b, msg); err != nil {
+		if err := dh.DeletePrefixInBucket(ctx, b, msg); err != nil {
 			return err
 		}
 	}
 	return nil
 }
-func (dh *BasicGarbageMgr) HandleDeleteFile(msg message.DeleteMessage) error {
+func (dh *BasicGarbageMgr) HandleDeleteFile(ctx context.Context, msg message.DeleteMessage) error {
 	if !msg.Confirm {
 		return nil
 	}
 	for _, b := range dh.StorageInterractor.ListBuckets() {
-		err := dh.StorageInterractor.DeleteObject(b, msg.Name)
+		err := dh.StorageInterractor.DeleteObject(ctx, b, msg.Name)
 		if err != nil {
 			ylogger.Zero.Error().AnErr("err", err).Str("name", msg.Name).Msg("failed to delete file")
 			return errors.Wrap(err, "failed to delete file")
@@ -272,13 +273,13 @@ func (dh *BasicGarbageMgr) HandleDeleteFile(msg message.DeleteMessage) error {
 	return nil
 }
 
-func (dh *BasicGarbageMgr) ListGarbageFiles(bucket string, msg message.DeleteMessage) ([]string, error) {
+func (dh *BasicGarbageMgr) ListGarbageFiles(ctx context.Context, bucket string, msg message.DeleteMessage) ([]string, error) {
 	//get first backup lsn
 	var firstBackupLSN uint64
 	var err error
 
 	if dh.Cnf.CheckBackup {
-		firstBackupLSN, err = dh.BackupInterractor.GetFirstLSN(msg.Segnum)
+		firstBackupLSN, err = dh.BackupInterractor.GetFirstLSN(ctx, msg.Segnum)
 		if err != nil {
 			ylogger.Zero.Error().AnErr("err", err).Msg("failed to get first lsn") //return or just assume there are no backups?
 			return nil, err
@@ -291,7 +292,7 @@ func (dh *BasicGarbageMgr) ListGarbageFiles(bucket string, msg message.DeleteMes
 
 	//list files in storage
 	ylogger.Zero.Info().Str("path", msg.Name).Msg("listing prefix")
-	objectMetas, err := dh.StorageInterractor.ListBucketPath(bucket, msg.Name, true)
+	objectMetas, err := dh.StorageInterractor.ListBucketPath(ctx, bucket, msg.Name, true)
 	if err != nil {
 		return nil, errors.Wrap(err, "could not list objects")
 	}

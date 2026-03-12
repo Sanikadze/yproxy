@@ -10,6 +10,7 @@
 package mock
 
 import (
+	context "context"
 	reflect "reflect"
 
 	gomock "go.uber.org/mock/gomock"
@@ -40,16 +41,16 @@ func (m *MockBackupInterractor) EXPECT() *MockBackupInterractorMockRecorder {
 }
 
 // GetFirstLSN mocks base method.
-func (m *MockBackupInterractor) GetFirstLSN(seg uint64) (uint64, error) {
+func (m *MockBackupInterractor) GetFirstLSN(ctx context.Context, seg uint64) (uint64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetFirstLSN", seg)
+	ret := m.ctrl.Call(m, "GetFirstLSN", ctx, seg)
 	ret0, _ := ret[0].(uint64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetFirstLSN indicates an expected call of GetFirstLSN.
-func (mr *MockBackupInterractorMockRecorder) GetFirstLSN(seg any) *gomock.Call {
+func (mr *MockBackupInterractorMockRecorder) GetFirstLSN(ctx, seg any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetFirstLSN", reflect.TypeOf((*MockBackupInterractor)(nil).GetFirstLSN), seg)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetFirstLSN", reflect.TypeOf((*MockBackupInterractor)(nil).GetFirstLSN), ctx, seg)
 }

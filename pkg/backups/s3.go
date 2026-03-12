@@ -1,6 +1,7 @@
 package backups
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,8 +16,8 @@ type StorageBackupInteractor struct {
 }
 
 // get lsn of the oldest backup
-func (b *StorageBackupInteractor) GetFirstLSN(seg uint64) (uint64, error) {
-	objects, err := b.Storage.ListPath(fmt.Sprintf("segments_005/seg%d/basebackups_005/", seg), true, nil)
+func (b *StorageBackupInteractor) GetFirstLSN(ctx context.Context, seg uint64) (uint64, error) {
+	objects, err := b.Storage.ListPath(ctx, fmt.Sprintf("segments_005/seg%d/basebackups_005/", seg), true, nil)
 	if err != nil {
 		ylogger.Zero.Debug().Err(err).Msg("GetFirstLSN: list result")
 		return 0, err
@@ -31,11 +32,12 @@ func (b *StorageBackupInteractor) GetFirstLSN(seg uint64) (uint64, error) {
 		}
 
 		// cat file
-		reader, err := b.Storage.CatFileFromStorage(obj.Path, 0, nil)
+		reader, err := b.Storage.CatFileFromStorage(ctx, obj.Path, 0, nil)
 		if err != nil {
 			continue
 		}
 		content, err := io.ReadAll(reader)
+		reader.Close()
 		if err != nil {
 			ylogger.Zero.Debug().Str("path", obj.Path).Err(err).Msg("GetFirstLSN: read all")
 			continue

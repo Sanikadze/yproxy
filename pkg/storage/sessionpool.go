@@ -61,13 +61,29 @@ func NewSessionPool(cnf *config.Storage, poolName string) SessionPool {
 
 // TODO : unit tests
 func (sp *S3SessionPool) createSession(cr *config.StorageCredentials) (*session.Session, error) {
-	s, err := session.NewSession(&aws.Config{
+	awsCfg := &aws.Config{
 		Retryer: client.DefaultRetryer{
 			NumMaxRetries: 20,
 			MinRetryDelay: time.Second,
 			MaxRetryDelay: time.Second * 20,
 		},
-	})
+	}
+
+	// Only create a custom HTTP transport when timeouts are explicitly configured.
+	// This preserves compatibility with httpmock-based tests that rely on http.DefaultTransport.
+	if sp.cnf.S3DialTimeout > 0 || sp.cnf.S3ResponseHeaderTimeout > 0 || sp.cnf.S3IdleConnTimeout > 0 {
+		transport := &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: sp.cnf.S3DialTimeout, KeepAlive: 15 * time.Second}).DialContext,
+			TLSHandshakeTimeout:  sp.cnf.S3DialTimeout,
+			ResponseHeaderTimeout: sp.cnf.S3ResponseHeaderTimeout,
+			IdleConnTimeout:       sp.cnf.S3IdleConnTimeout,
+			MaxIdleConnsPerHost:   256,
+			ExpectContinueTimeout: 10 * time.Second,
+		}
+		awsCfg.HTTPClient = &http.Client{Transport: transport}
+	}
+
+	s, err := session.NewSession(awsCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -142,8 +158,14 @@ func requestEndpoint(endpointSource, port string) (string, error) {
 }
 
 func (s *S3SessionPool) GetSession(ctx context.Context, cr *config.StorageCredentials) (*s3.S3, error) {
-	_ = s.sem.Acquire(ctx, 1)
+	ylogger.Zero.Debug().Int("used", int(s.usedConnections.Load())).Msg("waiting for session semaphore")
+	waitStart := time.Now()
+	if err := s.sem.Acquire(ctx, 1); err != nil {
+		ylogger.Zero.Error().Dur("wait", time.Since(waitStart)).Err(err).Msg("session semaphore acquire failed")
+		return nil, err
+	}
 	s.usedConnections.Add(1)
+	ylogger.Zero.Debug().Dur("wait", time.Since(waitStart)).Int("used", int(s.usedConnections.Load())).Msg("session semaphore acquired")
 	defer func() {
 		s.sem.Release(1)
 		s.usedConnections.Add(-1)

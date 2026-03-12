@@ -82,6 +82,21 @@ var (
 		Help:    "Request latency in seconds",
 		Buckets: sizeBuckets,
 	}, []string{"source"})
+
+	S3CancelledTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "yproxy_s3_cancelled_total",
+		Help: "Total number of cancelled S3 operations",
+	}, []string{"reason"})
+
+	S3Healthy = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "yproxy_s3_healthy",
+		Help: "Whether the S3 endpoint is reachable (1 = healthy, 0 = unhealthy)",
+	})
+
+	S3LastCheckDuration = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "yproxy_s3_last_check_duration_seconds",
+		Help: "Duration of the last S3 health check in seconds",
+	})
 )
 
 func NewMetricsWebServer(httpAddr string) *MetricsWebServer {

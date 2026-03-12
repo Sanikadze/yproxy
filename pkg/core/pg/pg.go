@@ -1,6 +1,7 @@
 package pg
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -381,7 +382,7 @@ func ProcessCopy(conn *pgproto3.Backend, prefix string, port uint64, oldCfgPath 
 		return err
 	}
 
-	objects, skipped, err := proc.ListFilesToCopy(prefix, port, instanceCnf.StorageCnf, oldStorage, s)
+	objects, skipped, err := proc.ListFilesToCopy(context.Background(), prefix, port, instanceCnf.StorageCnf, oldStorage, s)
 	if err != nil {
 		return err
 	}

@@ -1,6 +1,7 @@
 package yio
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"time"
@@ -23,6 +24,7 @@ type RestartReader interface {
 type YRestartReader struct {
 	underlying io.ReadCloser
 	lim        *rate.Limiter
+	ctx        context.Context
 	s          storage.StorageInteractor
 	name       string
 	settings   []settings.StorageSettings
@@ -43,7 +45,7 @@ func (y *YRestartReader) Read(p []byte) (n int, err error) {
 	return y.underlying.Read(p)
 }
 
-func NewRestartReader(s storage.StorageInteractor,
+func NewRestartReader(ctx context.Context, s storage.StorageInteractor,
 	name string, setts []settings.StorageSettings) RestartReader {
 
 	l := limiter.GetLimiter()
@@ -51,6 +53,7 @@ func NewRestartReader(s storage.StorageInteractor,
 	/* due to storage config "enable limiter" can change on read-restart, allocate
 	* limiter unconditionally */
 	return &YRestartReader{
+		ctx:      ctx,
 		s:        s,
 		name:     name,
 		settings: setts,
@@ -67,7 +70,7 @@ func (y *YRestartReader) Restart(offsetStart int64) error {
 	} else {
 		ylogger.Zero.Error().Str("object-path", y.name).Int64("offset", offsetStart).Msg("cat object with offset after possible error")
 	}
-	r, err := y.s.CatFileFromStorage(y.name, offsetStart, y.settings)
+	r, err := y.s.CatFileFromStorage(y.ctx, y.name, offsetStart, y.settings)
 	if err != nil {
 		return err
 	}

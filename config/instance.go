@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v2"
@@ -78,6 +79,12 @@ const (
 
 	/* 1 GB per  second */
 	DefaultStorageRateLimit = 1024 * 1024 * 1024
+
+	DefaultS3DialTimeout           = 10 * time.Second
+	DefaultS3ResponseHeaderTimeout = 30 * time.Second
+	DefaultS3IdleConnTimeout       = 90 * time.Second
+	DefaultS3OperationTimeout      = 60 * time.Second
+	DefaultS3StreamTimeout         = 5 * time.Minute
 )
 
 func EmbedDefaults(cfgInstance *Instance) {
@@ -108,7 +115,26 @@ func EmbedDefaults(cfgInstance *Instance) {
 	if cfgInstance.MetricsPort == 0 {
 		cfgInstance.MetricsPort = DefaultMetricsPort
 	}
-	cfgInstance.YezzeyRestoreParanoid = false
+	embedStorageTimeoutDefaults(&cfgInstance.StorageCnf)
+	embedStorageTimeoutDefaults(&cfgInstance.BackupStorageCnf)
+}
+
+func embedStorageTimeoutDefaults(s *Storage) {
+	if s.S3DialTimeout == 0 {
+		s.S3DialTimeout = DefaultS3DialTimeout
+	}
+	if s.S3ResponseHeaderTimeout == 0 {
+		s.S3ResponseHeaderTimeout = DefaultS3ResponseHeaderTimeout
+	}
+	if s.S3IdleConnTimeout == 0 {
+		s.S3IdleConnTimeout = DefaultS3IdleConnTimeout
+	}
+	if s.S3OperationTimeout == 0 {
+		s.S3OperationTimeout = DefaultS3OperationTimeout
+	}
+	if s.S3StreamTimeout == 0 {
+		s.S3StreamTimeout = DefaultS3StreamTimeout
+	}
 }
 
 func LoadInstanceConfig(cfgPath string) (err error) {

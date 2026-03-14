@@ -38,6 +38,9 @@ The output consists of 2 categories of metrics:
 |             | `read_req_errors_total` | counter | The total number of errors occurred while processing read requests |
 |             | `write_req_processed_total` | counter | The total number of processed write (upload) requests to S3 storage | 
 |             | `write_req_errors_total` | counter | The total number of errors occurred while processing write requests |
+| S3 Health   | `yproxy_s3_healthy` | gauge | S3 endpoint reachability (0=unreachable, 1=healthy) |
+|             | `yproxy_s3_last_check_duration_seconds` | gauge | Duration of the last S3 health check probe |
+|             | `yproxy_s3_cancelled_total` | counter | S3 operations cancelled (labels: reason=timeout/context_cancelled/socket_closed) |
 | Internal    | `request_latency_bucket` | histogram | The number of requests and requests time for each source request |
 |             | `request_size_bucket` | histogram | The number of requests and requests size for each source request |
 
@@ -555,3 +558,52 @@ write_req_errors_total 0
 write_req_processed_total 0
 ```
 </details>
+### S3 Timeouts and Resilience
+
+yproxy enforces timeouts at multiple levels to prevent indefinite hangs when S3 is unreachable.
+
+#### Timeout cascade
+
+The timeout hierarchy ensures yproxy returns errors to yezzey predictably:
+
+```
+Metadata operations:  yproxy S3 operation (60s)  < yezzey socket timeout (120s) < GP statement_timeout
+Streaming operations: yezzey socket timeout (120s) < yproxy S3 stream (5m)
+```
+
+For metadata operations (list, delete, head, copy), the S3 operation timeout (default 60s) fires before the yezzey socket timeout (120s), so yproxy returns an error to yezzey cleanly.
+
+For streaming operations (get, put), the S3 stream timeout (default 5m) is intentionally longer than the yezzey socket timeout to allow large object transfers. If S3 stalls mid-stream, yezzey will close the socket first; yproxy detects the broken socket and cancels the S3 operation immediately via context cancellation.
+
+#### HTTP transport timeouts
+
+These protect against TCP-level hangs (e.g., S3 accepts the connection but never responds):
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `s3_dial_timeout` | 10s | TCP connection establishment timeout |
+| `s3_response_header_timeout` | 30s | Time to wait for response headers after sending request |
+| `s3_idle_conn_timeout` | 90s | How long idle connections stay in the pool |
+
+#### Operation-level timeouts
+
+These are context deadlines on the entire S3 API call:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `s3_operation_timeout` | 60s | Metadata operations: list, delete, head, copy |
+| `s3_stream_timeout` | 5m | Streaming operations: get (download), put (upload) |
+
+#### Behavior during S3 outage
+
+- All S3 operations return errors after their configured timeout instead of hanging indefinitely.
+- When a yezzey client disconnects (e.g., `pg_terminate_backend()`), yproxy cancels in-flight S3 operations immediately via context cancellation.
+- Partial multipart uploads are aborted when the client socket closes before sending CopyDone, preventing corrupted objects in S3.
+- A background health check goroutine probes S3 availability every 30s and exposes Prometheus metrics on the metrics port (default 2112):
+  - `yproxy_s3_healthy` (gauge 0/1) — S3 reachability
+  - `yproxy_s3_last_check_duration_seconds` (gauge) — duration of the last health check
+  - `yproxy_s3_cancelled_total` (counter, label `reason`: timeout/context_cancelled/socket_closed) — cancelled S3 operations
+
+#### Configuration
+
+All timeout settings are optional. If omitted, safe defaults apply automatically. Existing configuration files without these fields continue to work unchanged. See `examples/yproxy.yaml` for a complete example.

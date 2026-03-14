@@ -6,6 +6,12 @@ storage:
   storage_prefix: "wal-e/6/"
   storage_bucket: "gpyezzey"
   storage_region: "us-west-2"
+  # S3 timeouts (all optional, shown with defaults)
+  s3_dial_timeout: 10s
+  s3_response_header_timeout: 30s
+  s3_idle_conn_timeout: 90s
+  s3_operation_timeout: 60s    # metadata operations (list, delete, head, copy)
+  s3_stream_timeout: 5m        # streaming operations (get, put)
 
 vacuum:
   check_backup: false

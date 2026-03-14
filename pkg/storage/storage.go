@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -11,28 +12,28 @@ import (
 )
 
 type StorageReader interface {
-	CatFileFromStorage(name string, offset int64, setts []settings.StorageSettings) (io.ReadCloser, error)
+	CatFileFromStorage(ctx context.Context, name string, offset int64, setts []settings.StorageSettings) (io.ReadCloser, error)
 }
 
 type StorageWriter interface {
-	PutFileToDest(name string, r io.Reader, settings []settings.StorageSettings) error
-	PatchFile(name string, r io.ReadSeeker, startOffset int64) error
+	PutFileToDest(ctx context.Context, name string, r io.Reader, settings []settings.StorageSettings) error
+	PatchFile(ctx context.Context, name string, r io.ReadSeeker, startOffset int64) error
 }
 
 type StorageLister interface {
-	ListPath(prefix string, useCache bool, settings []settings.StorageSettings) ([]*object.ObjectInfo, error)
-	ListBucketPath(bucket, prefix string, useCache bool) ([]*object.ObjectInfo, error)
-	ListFailedMultipartUploads(bucket string) (map[string]string, error)
+	ListPath(ctx context.Context, prefix string, useCache bool, settings []settings.StorageSettings) ([]*object.ObjectInfo, error)
+	ListBucketPath(ctx context.Context, bucket, prefix string, useCache bool) ([]*object.ObjectInfo, error)
+	ListFailedMultipartUploads(ctx context.Context, bucket string) (map[string]string, error)
 }
 
 type StorageMover interface {
-	MoveObject(bucket, from string, to string) error
-	DeleteObject(bucket, key string) error
-	AbortMultipartUpload(bucket, key, uploadId string) error
+	MoveObject(ctx context.Context, bucket, from string, to string) error
+	DeleteObject(ctx context.Context, bucket, key string) error
+	AbortMultipartUpload(ctx context.Context, bucket, key, uploadId string) error
 }
 
 type StorageCopier interface {
-	CopyObject(from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket string) error
+	CopyObject(ctx context.Context, from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket string) error
 }
 
 //go:generate mockgen -destination=pkg/mock/storage.go -package=mock

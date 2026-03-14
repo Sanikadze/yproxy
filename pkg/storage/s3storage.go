@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -52,7 +53,7 @@ func (s *S3StorageInteractor) DefaultBucket() string {
 
 var _ StorageInteractor = &S3StorageInteractor{}
 
-func (s *S3StorageInteractor) CatFileFromStorage(name string, offset int64, setts []settings.StorageSettings) (io.ReadCloser, error) {
+func (s *S3StorageInteractor) CatFileFromStorage(ctx context.Context, name string, offset int64, setts []settings.StorageSettings) (io.ReadCloser, error) {
 
 	timeStart := time.Now()
 	objectPath := strings.TrimLeft(path.Join(s.cnf.StoragePrefix, name), "/")
@@ -67,7 +68,7 @@ func (s *S3StorageInteractor) CatFileFromStorage(name string, offset int64, sett
 
 	// XXX: fix this
 	cr := s.credentialMap[bucket]
-	sess, err := s.pool.GetSession(context.TODO(), &cr)
+	sess, err := s.pool.GetSession(ctx, &cr)
 	if err != nil {
 		ylogger.Zero.Err(err).Msg("failed to acquire s3 session")
 		return nil, err
@@ -78,19 +79,39 @@ func (s *S3StorageInteractor) CatFileFromStorage(name string, offset int64, sett
 		Range:  aws.String(fmt.Sprintf("bytes=%d-", offset)),
 	}
 
-	ylogger.Zero.Debug().Str("key", objectPath).Int64("offset", offset).Str("bucket", bucket).Msg("requesting external storage")
+	ylogger.Zero.Debug().Str("op", "GetObject").Str("bucket", bucket).Str("key", objectPath).Int64("offset", offset).Msg("s3 operation started")
 
-	object, err := sess.GetObject(input)
+	opCtx, cancel := context.WithTimeout(ctx, time.Duration(s.cnf.S3StreamTimeout))
+	object, err := sess.GetObjectWithContext(opCtx, input)
+	if err != nil {
+		cancel()
+		logContextError(err, "GetObject", bucket, objectPath, time.Duration(s.cnf.S3StreamTimeout))
+		ylogger.Zero.Error().Str("op", "GetObject").Str("bucket", bucket).Str("key", objectPath).Dur("duration", time.Since(timeStart)).Err(err).Msg("s3 operation failed")
+		return nil, err
+	}
 	getTime := time.Since(timeStart).Nanoseconds()
 	objLen := 1.0
 	if object.ContentLength != nil {
 		objLen = float64(*object.ContentLength)
 	}
 	metrics.StoreLatencyAndSizeInfo("S3_GET", objLen, float64(getTime))
-	return object.Body, err
+	ylogger.Zero.Debug().Str("op", "GetObject").Str("bucket", bucket).Str("key", objectPath).Dur("duration", time.Since(timeStart)).Msg("s3 operation completed")
+	return &contextCancelReader{ReadCloser: object.Body, cancel: cancel}, nil
 }
 
-func (s *S3StorageInteractor) PutFileToDest(name string, r io.Reader, settings []settings.StorageSettings) error {
+// contextCancelReader wraps an io.ReadCloser and cancels a context on Close.
+type contextCancelReader struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (r *contextCancelReader) Close() error {
+	err := r.ReadCloser.Close()
+	r.cancel()
+	return err
+}
+
+func (s *S3StorageInteractor) PutFileToDest(ctx context.Context, name string, r io.Reader, settings []settings.StorageSettings) error {
 
 	timeStart := time.Now()
 	objectPath := strings.TrimLeft(path.Join(s.cnf.StoragePrefix, name), "/")
@@ -115,11 +136,13 @@ func (s *S3StorageInteractor) PutFileToDest(name string, r io.Reader, settings [
 	}
 
 	cr := s.credentialMap[bucket]
-	sess, err := s.pool.GetSession(context.TODO(), &cr)
+	sess, err := s.pool.GetSession(ctx, &cr)
 	if err != nil {
 		ylogger.Zero.Err(err).Msg("failed to acquire s3 session")
 		return err
 	}
+
+	ylogger.Zero.Debug().Str("op", "PutObject").Str("bucket", bucket).Str("key", objectPath).Bool("multipart", multipartUpload).Int64("chunk_size", multipartChunkSize).Msg("s3 operation started")
 
 	up := s3manager.NewUploaderWithClient(sess, func(uploader *s3manager.Uploader) {
 		uploader.PartSize = int64(multipartChunkSize)
@@ -128,7 +151,9 @@ func (s *S3StorageInteractor) PutFileToDest(name string, r io.Reader, settings [
 	putLen := int(multipartChunkSize)
 	if multipartUpload {
 		s.multipartUploads.Store(objectPath, true)
-		_, err = up.Upload(
+		opCtx, opCancel := context.WithTimeout(ctx, time.Duration(s.cnf.S3StreamTimeout))
+		defer opCancel()
+		_, err = up.UploadWithContext(opCtx,
 			&s3manager.UploadInput{
 				Bucket:       aws.String(bucket),
 				Key:          aws.String(objectPath),
@@ -144,31 +169,43 @@ func (s *S3StorageInteractor) PutFileToDest(name string, r io.Reader, settings [
 			return err
 		}
 		putLen = len(body)
-		_, err = sess.PutObject(&s3.PutObjectInput{
+		opCtx, cancel := context.WithTimeout(ctx, time.Duration(s.cnf.S3StreamTimeout))
+		defer cancel()
+		_, err = sess.PutObjectWithContext(opCtx, &s3.PutObjectInput{
 			Bucket:       aws.String(bucket),
 			Key:          aws.String(objectPath),
 			Body:         bytes.NewReader(body),
 			StorageClass: aws.String(storageClass),
 		})
 	}
+	dur := time.Since(timeStart)
+	if err != nil {
+		logContextError(err, "PutObject", bucket, objectPath, time.Duration(s.cnf.S3StreamTimeout))
+		ylogger.Zero.Error().Str("op", "PutObject").Str("bucket", bucket).Str("key", objectPath).Dur("duration", dur).Err(err).Msg("s3 operation failed")
+	} else {
+		ylogger.Zero.Debug().Str("op", "PutObject").Str("bucket", bucket).Str("key", objectPath).Dur("duration", dur).Msg("s3 operation completed")
+	}
 
-	putTime := time.Since(timeStart).Nanoseconds()
+	putTime := dur.Nanoseconds()
 	metrics.StoreLatencyAndSizeInfo("S3_PUT", float64(putLen), float64(putTime))
 	return err
 }
 
-func (s *S3StorageInteractor) PatchFile(name string, r io.ReadSeeker, startOffset int64) error {
+func (s *S3StorageInteractor) PatchFile(ctx context.Context, name string, r io.ReadSeeker, startOffset int64) error {
 
+	timeStart := time.Now()
 	/* XXX: fix usage of default bucket */
 	cr := s.credentialMap[s.cnf.StorageBucket]
 
-	sess, err := s.pool.GetSession(context.TODO(), &cr)
+	sess, err := s.pool.GetSession(ctx, &cr)
 	if err != nil {
 		ylogger.Zero.Err(err).Msg("failed to acquire s3 session")
-		return nil
+		return err
 	}
 
 	objectPath := strings.TrimLeft(path.Join(s.cnf.StoragePrefix, name), "/")
+
+	ylogger.Zero.Debug().Str("op", "PatchObject").Str("bucket", s.cnf.StorageBucket).Str("key", objectPath).Int64("offset", startOffset).Msg("s3 operation started")
 
 	input := &s3.PatchObjectInput{
 		Bucket:       &s.cnf.StorageBucket,
@@ -177,15 +214,21 @@ func (s *S3StorageInteractor) PatchFile(name string, r io.ReadSeeker, startOffse
 		ContentRange: aws.String(fmt.Sprintf("bytes %d-18446744073709551615", startOffset)),
 	}
 
-	_, err = sess.PatchObject(input)
-
-	ylogger.Zero.Debug().Str("key", objectPath).Str("bucket",
-		s.cnf.StorageBucket).Msg("modifying file in external storage")
+	opCtx, cancel := context.WithTimeout(ctx, time.Duration(s.cnf.S3StreamTimeout))
+	defer cancel()
+	_, err = sess.PatchObjectWithContext(opCtx, input)
+	dur := time.Since(timeStart)
+	if err != nil {
+		logContextError(err, "PatchObject", s.cnf.StorageBucket, objectPath, time.Duration(s.cnf.S3StreamTimeout))
+		ylogger.Zero.Error().Str("op", "PatchObject").Str("bucket", s.cnf.StorageBucket).Str("key", objectPath).Dur("duration", dur).Err(err).Msg("s3 operation failed")
+	} else {
+		ylogger.Zero.Debug().Str("op", "PatchObject").Str("bucket", s.cnf.StorageBucket).Str("key", objectPath).Dur("duration", dur).Msg("s3 operation completed")
+	}
 
 	return err
 }
 
-func (s *S3StorageInteractor) ListPath(prefix string, useCache bool, settings []settings.StorageSettings) ([]*object.ObjectInfo, error) {
+func (s *S3StorageInteractor) ListPath(ctx context.Context, prefix string, useCache bool, settings []settings.StorageSettings) ([]*object.ObjectInfo, error) {
 	if useCache {
 		objectMetas, err := readCache(*s.cnf, prefix)
 		if err == nil {
@@ -203,14 +246,14 @@ func (s *S3StorageInteractor) ListPath(prefix string, useCache bool, settings []
 		return nil, err
 	}
 
-	return s.ListBucketPath(bucket, prefix, useCache)
+	return s.ListBucketPath(ctx, bucket, prefix, useCache)
 }
 
-func (s *S3StorageInteractor) ListBucketPath(bucket, prefix string, useCache bool) ([]*object.ObjectInfo, error) {
+func (s *S3StorageInteractor) ListBucketPath(ctx context.Context, bucket, prefix string, useCache bool) ([]*object.ObjectInfo, error) {
 
 	/* XXX: fix usage of default bucket */
 	cr := s.credentialMap[bucket]
-	sess, err := s.pool.GetSession(context.TODO(), &cr)
+	sess, err := s.pool.GetSession(ctx, &cr)
 	if err != nil {
 		ylogger.Zero.Err(err).Msg("failed to acquire s3 session")
 		return nil, err
@@ -220,7 +263,8 @@ func (s *S3StorageInteractor) ListBucketPath(bucket, prefix string, useCache boo
 	prefix = strings.TrimLeft(path.Join(s.cnf.StoragePrefix, prefix), "/")
 	metas := make([]*object.ObjectInfo, 0)
 
-	ylogger.Zero.Debug().Str("bucket", bucket).Str("bucket", bucket).Msg("listing bucket")
+	ylogger.Zero.Debug().Str("op", "ListObjectsV2").Str("bucket", bucket).Str("prefix", prefix).Msg("s3 operation started")
+	listStart := time.Now()
 
 	for {
 		input := &s3.ListObjectsV2Input{
@@ -229,9 +273,12 @@ func (s *S3StorageInteractor) ListBucketPath(bucket, prefix string, useCache boo
 			ContinuationToken: continuationToken,
 		}
 
-		out, err := sess.ListObjectsV2(input)
+		opCtx, cancel := context.WithTimeout(ctx, time.Duration(s.cnf.S3OperationTimeout))
+		out, err := sess.ListObjectsV2WithContext(opCtx, input)
+		cancel()
 		if err != nil {
-			ylogger.Zero.Debug().Err(err).Msg("failed to list prefix")
+			logContextError(err, "ListObjectsV2", bucket, prefix, time.Duration(s.cnf.S3OperationTimeout))
+			ylogger.Zero.Error().Str("op", "ListObjectsV2").Str("bucket", bucket).Str("prefix", prefix).Dur("duration", time.Since(listStart)).Err(err).Msg("s3 operation failed")
 			return nil, err
 		}
 
@@ -262,6 +309,8 @@ func (s *S3StorageInteractor) ListBucketPath(bucket, prefix string, useCache boo
 		continuationToken = out.NextContinuationToken
 	}
 
+	ylogger.Zero.Debug().Str("op", "ListObjectsV2").Str("bucket", bucket).Str("prefix", prefix).Int("count", len(metas)).Dur("duration", time.Since(listStart)).Msg("s3 operation completed")
+
 	if useCache {
 		err = putInCache(s.cnf.ID(), metas)
 		if err != nil {
@@ -272,47 +321,49 @@ func (s *S3StorageInteractor) ListBucketPath(bucket, prefix string, useCache boo
 	return metas, nil
 }
 
-func (s *S3StorageInteractor) DeleteObject(bucket, key string) error {
+func (s *S3StorageInteractor) DeleteObject(ctx context.Context, bucket, key string) error {
 
 	/* XXX: fix usage of default bucket */
 	cr := s.credentialMap[bucket]
-	sess, err := s.pool.GetSession(context.TODO(), &cr)
+	sess, err := s.pool.GetSession(ctx, &cr)
 	if err != nil {
 		ylogger.Zero.Err(err).Msg("failed to acquire s3 session")
 		return err
 	}
-	ylogger.Zero.Debug().Msg("acquired session")
-
 	if !strings.HasPrefix(key, s.cnf.StoragePrefix) {
 		key = path.Join(s.cnf.StoragePrefix, key)
 	}
 	key = strings.TrimLeft(key, "/")
+
+	ylogger.Zero.Debug().Str("op", "DeleteObject").Str("bucket", bucket).Str("key", key).Msg("s3 operation started")
+	deleteStart := time.Now()
 
 	input2 := s3.DeleteObjectInput{
 		Bucket: &bucket,
 		Key:    aws.String(key),
 	}
 
-	_, err = sess.DeleteObject(&input2)
+	opCtx, cancel := context.WithTimeout(ctx, time.Duration(s.cnf.S3OperationTimeout))
+	defer cancel()
+	_, err = sess.DeleteObjectWithContext(opCtx, &input2)
 	if err != nil {
-		ylogger.Zero.Err(err).Msg("failed to delete old object")
+		logContextError(err, "DeleteObject", bucket, key, time.Duration(s.cnf.S3OperationTimeout))
+		ylogger.Zero.Error().Str("op", "DeleteObject").Str("bucket", bucket).Str("key", key).Dur("duration", time.Since(deleteStart)).Err(err).Msg("s3 operation failed")
 		return err
 	}
-	ylogger.Zero.Debug().Str("bucket", bucket).Str("path", key).Msg("deleted object")
+	ylogger.Zero.Debug().Str("op", "DeleteObject").Str("bucket", bucket).Str("key", key).Dur("duration", time.Since(deleteStart)).Msg("s3 operation completed")
 	return nil
 }
 
-func (s *S3StorageInteractor) SScopyObject(from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket string) error {
+func (s *S3StorageInteractor) SScopyObject(ctx context.Context, from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket string) error {
 
 	/* XXX: fix usage of default bucket */
 	cr := s.credentialMap[toStorageBucket]
-	sess, err := s.pool.GetSession(context.TODO(), &cr)
+	sess, err := s.pool.GetSession(ctx, &cr)
 	if err != nil {
 		ylogger.Zero.Err(err).Msg("failed to acquire s3 session")
 		return err
 	}
-	ylogger.Zero.Debug().Msg("acquired session for server-side copy")
-
 	if !strings.HasPrefix(from, fromStoragePrefix) {
 		from = path.Join(fromStoragePrefix, from)
 	}
@@ -324,7 +375,8 @@ func (s *S3StorageInteractor) SScopyObject(from, to, fromStoragePrefix, fromStor
 	to = strings.TrimLeft(to, "/")
 	from = path.Join(fromStorageBucket, from)
 
-	ylogger.Zero.Debug().Str("to", to).Str("from", from).Msg("requesting server-side copy")
+	ylogger.Zero.Debug().Str("op", "CopyObject").Str("bucket", toStorageBucket).Str("from", from).Str("to", to).Msg("s3 operation started")
+	copyStart := time.Now()
 
 	inp := s3.CopyObjectInput{
 		Bucket:     &toStorageBucket,
@@ -332,51 +384,67 @@ func (s *S3StorageInteractor) SScopyObject(from, to, fromStoragePrefix, fromStor
 		Key:        aws.String(to),
 	}
 
-	_, err = sess.CopyObject(&inp)
+	opCtx, cancel := context.WithTimeout(ctx, time.Duration(s.cnf.S3OperationTimeout))
+	defer cancel()
+	_, err = sess.CopyObjectWithContext(opCtx, &inp)
 	if err != nil {
-		ylogger.Zero.Error().Str("bucket-from", fromStorageBucket).Str("bucket-to", toStorageBucket).Err(err).Msg("failed to copy object")
+		logContextError(err, "CopyObject", toStorageBucket, to, time.Duration(s.cnf.S3OperationTimeout))
+		ylogger.Zero.Error().Str("op", "CopyObject").Str("bucket", toStorageBucket).Str("from", from).Str("to", to).Dur("duration", time.Since(copyStart)).Err(err).Msg("s3 operation failed")
 		return err
 	}
-	ylogger.Zero.Debug().Str("path-from", from).Str("path-to", to).Msg("copied object")
+	ylogger.Zero.Debug().Str("op", "CopyObject").Str("bucket", toStorageBucket).Str("from", from).Str("to", to).Dur("duration", time.Since(copyStart)).Msg("s3 operation completed")
 
 	return nil
 }
 
-func (s *S3StorageInteractor) MoveObject(bucket string, from string, to string) error {
+func (s *S3StorageInteractor) MoveObject(ctx context.Context, bucket string, from string, to string) error {
 	if from == to {
 		return nil
 	}
-	if err := s.SScopyObject(from, to, s.cnf.StoragePrefix /* same for all buckets */, bucket, bucket); err != nil {
+	if err := s.SScopyObject(ctx, from, to, s.cnf.StoragePrefix /* same for all buckets */, bucket, bucket); err != nil {
 		return err
 	}
-	return s.DeleteObject(bucket, from)
+	return s.DeleteObject(ctx, bucket, from)
 }
 
-func (s *S3StorageInteractor) CopyObject(bucket, from, to, fromStoragePrefix, fromStorageBucket string) error {
-	return s.SScopyObject(bucket, from, to, fromStoragePrefix, fromStorageBucket)
+func (s *S3StorageInteractor) CopyObject(ctx context.Context, from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket string) error {
+	return s.SScopyObject(ctx, from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket)
 }
 
-func (s *S3StorageInteractor) AbortMultipartUpload(bucket, key, uploadId string) error {
+func (s *S3StorageInteractor) AbortMultipartUpload(ctx context.Context, bucket, key, uploadId string) error {
+
+	ylogger.Zero.Debug().Str("op", "AbortMultipartUpload").Str("bucket", bucket).Str("key", key).Str("upload_id", uploadId).Msg("s3 operation started")
+	abortStart := time.Now()
 
 	/* XXX: fix usage of default bucket */
 	cr := s.credentialMap[bucket]
-	sess, err := s.pool.GetSession(context.TODO(), &cr)
+	sess, err := s.pool.GetSession(ctx, &cr)
 	if err != nil {
 		return err
 	}
 
-	_, err = sess.AbortMultipartUpload(&s3.AbortMultipartUploadInput{
+	opCtx, cancel := context.WithTimeout(ctx, time.Duration(s.cnf.S3OperationTimeout))
+	defer cancel()
+	_, err = sess.AbortMultipartUploadWithContext(opCtx, &s3.AbortMultipartUploadInput{
 		Bucket:   aws.String(bucket),
 		UploadId: aws.String(uploadId),
 		Key:      aws.String(key),
 	})
+	if err != nil {
+		ylogger.Zero.Error().Str("op", "AbortMultipartUpload").Str("bucket", bucket).Str("key", key).Dur("duration", time.Since(abortStart)).Err(err).Msg("s3 operation failed")
+	} else {
+		ylogger.Zero.Debug().Str("op", "AbortMultipartUpload").Str("bucket", bucket).Str("key", key).Dur("duration", time.Since(abortStart)).Msg("s3 operation completed")
+	}
 	return err
 }
 
-func (s *S3StorageInteractor) ListFailedMultipartUploads(bucket string) (map[string]string, error) {
+func (s *S3StorageInteractor) ListFailedMultipartUploads(ctx context.Context, bucket string) (map[string]string, error) {
+	ylogger.Zero.Debug().Str("op", "ListMultipartUploads").Str("bucket", bucket).Msg("s3 operation started")
+	listStart := time.Now()
+
 	/* XXX: fix usage of default bucket */
 	cr := s.credentialMap[bucket]
-	sess, err := s.pool.GetSession(context.TODO(), &cr)
+	sess, err := s.pool.GetSession(ctx, &cr)
 	if err != nil {
 		return nil, err
 	}
@@ -384,11 +452,14 @@ func (s *S3StorageInteractor) ListFailedMultipartUploads(bucket string) (map[str
 	uploads := make([]*s3.MultipartUpload, 0)
 	var keyMarker *string
 	for {
-		out, err := sess.ListMultipartUploads(&s3.ListMultipartUploadsInput{
+		opCtx, cancel := context.WithTimeout(ctx, time.Duration(s.cnf.S3OperationTimeout))
+		out, err := sess.ListMultipartUploadsWithContext(opCtx, &s3.ListMultipartUploadsInput{
 			Bucket:    aws.String(bucket),
 			KeyMarker: keyMarker,
 		})
+		cancel()
 		if err != nil {
+			ylogger.Zero.Error().Str("op", "ListMultipartUploads").Str("bucket", bucket).Dur("duration", time.Since(listStart)).Err(err).Msg("s3 operation failed")
 			return nil, err
 		}
 
@@ -407,7 +478,19 @@ func (s *S3StorageInteractor) ListFailedMultipartUploads(bucket string) (map[str
 			out[*upload.Key] = *upload.UploadId
 		}
 	}
+	ylogger.Zero.Debug().Str("op", "ListMultipartUploads").Str("bucket", bucket).Int("count", len(out)).Dur("duration", time.Since(listStart)).Msg("s3 operation completed")
 	return out, nil
+}
+
+// logContextError logs context-related errors (deadline exceeded, cancelled) with operation details.
+func logContextError(err error, op, bucket, key string, timeout time.Duration) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		ylogger.Zero.Error().Str("op", op).Str("bucket", bucket).Str("key", key).Dur("timeout", timeout).Msg("s3 operation timed out")
+		metrics.S3CancelledTotal.With(map[string]string{"reason": "timeout"}).Inc()
+	} else if errors.Is(err, context.Canceled) {
+		ylogger.Zero.Warn().Str("op", op).Str("bucket", bucket).Str("key", key).Msg("s3 operation cancelled (client disconnected)")
+		metrics.S3CancelledTotal.With(map[string]string{"reason": "context_cancelled"}).Inc()
+	}
 }
 
 type cacheEntry struct {
@@ -488,7 +571,7 @@ func readCache(cfg config.Storage, prefix string) ([]*object.ObjectInfo, error) 
 		return nil, fmt.Errorf("cache for storage %s has expired", cfg.ID())
 	}
 
-	res := make([]*object.ObjectInfo, 0, len(objs))
+	res := make([]*object.ObjectInfo, 0, len(storageFiles.Objects))
 	for _, obj := range storageFiles.Objects {
 		if strings.HasPrefix(obj.Path, prefix) {
 			res = append(res, obj)

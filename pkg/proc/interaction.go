@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/yezzey-gp/yproxy/config"
 	"github.com/yezzey-gp/yproxy/pkg/backups"
@@ -13,6 +14,7 @@ import (
 	"github.com/yezzey-gp/yproxy/pkg/crypt"
 	"github.com/yezzey-gp/yproxy/pkg/database"
 	"github.com/yezzey-gp/yproxy/pkg/message"
+	"github.com/yezzey-gp/yproxy/pkg/metrics"
 	"github.com/yezzey-gp/yproxy/pkg/object"
 	"github.com/yezzey-gp/yproxy/pkg/proc/yio"
 	"github.com/yezzey-gp/yproxy/pkg/settings"
@@ -22,6 +24,7 @@ import (
 )
 
 func ProcessCatExtended(
+	ctx context.Context,
 	s storage.StorageInteractor,
 	pr *ProtoReader,
 	name string,
@@ -29,7 +32,7 @@ func ProcessCatExtended(
 
 	ycl.SetExternalFilePath(name)
 
-	yr := yio.NewYRetryReader(yio.NewRestartReader(s, name, settings), ycl)
+	yr := yio.NewYRetryReader(yio.NewRestartReader(ctx, s, name, settings), ycl)
 
 	var contentReader io.Reader
 	contentReader = yr
@@ -74,6 +77,7 @@ func ProcessCatExtended(
 }
 
 func ProcessPutExtended(
+	ctx context.Context,
 	s storage.StorageInteractor,
 	pr *ProtoReader,
 	name string,
@@ -82,10 +86,13 @@ func ProcessPutExtended(
 
 	ycl.SetExternalFilePath(name)
 
-	var w io.WriteCloser
-	r, w := io.Pipe()
+	putCtx, putCancel := context.WithCancel(ctx)
+	defer putCancel()
 
-	w = yio.NewYproxyWriter(w, ycl)
+	var copyDoneReceived atomic.Bool
+
+	r, pw := io.Pipe()
+	w := yio.NewYproxyWriter(pw, ycl)
 
 	defer func() { _ = r.Close() }()
 	defer func() { _ = w.Close() }()
@@ -100,6 +107,8 @@ func ProcessPutExtended(
 		if encrypt {
 			if cr == nil {
 				ylogger.Zero.Error().Err(fmt.Errorf("failed to encrypt, crypter not configured")).Str("path", name).Msg("connection aborted")
+				pw.CloseWithError(fmt.Errorf("crypter not configured"))
+				putCancel()
 				return
 			}
 
@@ -107,6 +116,8 @@ func ProcessPutExtended(
 			ww, err = cr.Encrypt(w)
 			if err != nil {
 				ylogger.Zero.Error().Err(err).Msg("failed to encrypt")
+				pw.CloseWithError(err)
+				putCancel()
 				return
 			}
 		} else {
@@ -114,6 +125,17 @@ func ProcessPutExtended(
 		}
 
 		defer func() {
+			if !copyDoneReceived.Load() {
+				// Socket closed before CopyDone — signal error to abort the upload
+				pw.CloseWithError(fmt.Errorf("socket closed before CopyDone"))
+				putCancel()
+				// Close encryption writer to release resources (ignore errors since we're aborting)
+				_ = ww.Close()
+				ylogger.Zero.Warn().Str("key", name).Msg("PUT aborted: socket closed before CopyDone, aborting multipart upload")
+				metrics.S3CancelledTotal.With(map[string]string{"reason": "socket_closed"}).Inc()
+				return
+			}
+
 			if err := ww.Close(); err != nil {
 				ylogger.Zero.Error().Err(err).Msg("failed to close connection")
 				return
@@ -152,6 +174,7 @@ func ProcessPutExtended(
 			case message.MessageTypeCopyDone:
 				msg := message.CopyDoneMessage{}
 				msg.Decode(body)
+				copyDoneReceived.Store(true)
 				return
 			default:
 				return
@@ -164,34 +187,40 @@ func ProcessPutExtended(
 	}
 
 	/* Should go after reader dispatch! */
-	if err := s.PutFileToDest(name, r, settings); err != nil {
+	if err := s.PutFileToDest(putCtx, name, r, settings); err != nil {
 		ylogger.Zero.Error().Err(err).Bool("encrypt", encrypt).Str("name", name).Msg("failed to upload")
 		return err
 	}
 
+	ylogger.Zero.Debug().Str("name", name).Msg("PutFileToDest completed, waiting for reader goroutine")
 	wg.Wait()
+	ylogger.Zero.Debug().Str("name", name).Bool("replyKV", replyKV).Msg("reader goroutine done, sending response")
 
 	if replyKV {
-		if _, err := ycl.GetRW().Write(message.NewPutCompleteMessage(uint16(crypt.SingleKeyEncryption)).Encode()); err != nil {
-			ylogger.Zero.Error().Err(err).Bool("encrypt", encrypt).Str("name", name).Msg("failed to upload")
+		msg := message.NewPutCompleteMessage(uint16(crypt.SingleKeyEncryption)).Encode()
+		ylogger.Zero.Debug().Str("name", name).Int("msg_len", len(msg)).Msg("sending PutComplete")
+		if n, err := ycl.GetRW().Write(msg); err != nil {
+			ylogger.Zero.Error().Err(err).Int("written", n).Bool("encrypt", encrypt).Str("name", name).Msg("failed to send PutComplete")
 			return err
 		}
+		ylogger.Zero.Debug().Str("name", name).Msg("PutComplete sent successfully")
 	}
 
 	if _, err := ycl.GetRW().Write(message.NewReadyForQueryMessage().Encode()); err != nil {
-		ylogger.Zero.Error().Err(err).Bool("encrypt", encrypt).Str("name", name).Msg("failed to upload")
+		ylogger.Zero.Error().Err(err).Bool("encrypt", encrypt).Str("name", name).Msg("failed to send ReadyForQuery")
 		return err
 	}
+	ylogger.Zero.Debug().Str("name", name).Msg("ReadyForQuery sent, PUT completed")
 
 	return nil
 }
 
-func ProcessListExtended(prefix string, settings []settings.StorageSettings, s storage.StorageInteractor, cr crypt.Crypter, ycl client.YproxyClient, cnf *config.Vacuum) error {
+func ProcessListExtended(ctx context.Context, prefix string, settings []settings.StorageSettings, s storage.StorageInteractor, cr crypt.Crypter, ycl client.YproxyClient, cnf *config.Vacuum) error {
 	ycl.SetExternalFilePath(prefix)
 
 	ylogger.Zero.Debug().Str("prefix", prefix).Msg("listing for prefix")
 
-	objectMetas, err := s.ListPath(prefix, true, settings)
+	objectMetas, err := s.ListPath(ctx, prefix, true, settings)
 	if err != nil {
 		_ = ycl.ReplyError(fmt.Errorf("could not list objects: %s", err), "failed to complete request")
 		ylogger.Zero.Error().Err(err).Msg("failed to complete request")
@@ -205,7 +234,7 @@ func ProcessListExtended(prefix string, settings []settings.StorageSettings, s s
 		if err != nil {
 			_ = ycl.ReplyError(err, "failed to upload")
 
-			return nil
+			return err
 		}
 	}
 
@@ -219,6 +248,7 @@ func ProcessListExtended(prefix string, settings []settings.StorageSettings, s s
 	return nil
 }
 func ProcessCopyExtended(
+	ctx context.Context,
 	name string,
 	oldCfgPath string,
 	port uint64,
@@ -251,16 +281,16 @@ func ProcessCopyExtended(
 		_ = ycl.ReplyError(fmt.Errorf("could not read old config: %s", err), "failed to complete request")
 
 		ylogger.Zero.Error().Err(err).Msg("failed to complete request")
-		return nil
+		return err
 	}
 	config.EmbedDefaults(&sourceInstanceCnf)
 	oldStorage, err := storage.NewStorage(&sourceInstanceCnf.StorageCnf, "")
 	if err != nil {
 		return err
 	}
-	ylogger.Zero.Info().Interface("cnf", sourceInstanceCnf).Msg("loaded new config")
+	ylogger.Zero.Info().Str("endpoint", sourceInstanceCnf.StorageCnf.StorageEndpoint).Str("bucket", sourceInstanceCnf.StorageCnf.StorageBucket).Str("prefix", sourceInstanceCnf.StorageCnf.StoragePrefix).Msg("loaded new config")
 
-	objectMetas, _, err := ListFilesToCopy(name, port, sourceInstanceCnf.StorageCnf, oldStorage, s)
+	objectMetas, _, err := ListFilesToCopy(ctx, name, port, sourceInstanceCnf.StorageCnf, oldStorage, s)
 	if err != nil {
 		_ = ycl.ReplyError(err, "failed to list files to copy")
 		ylogger.Zero.Error().Err(err).Msg("failed to list files to copy")
@@ -288,7 +318,13 @@ func ProcessCopyExtended(
 			for i := range len(objectMetas) {
 				path := strings.TrimPrefix(objectMetas[i].Path, sourceInstanceCnf.StorageCnf.StoragePrefix)
 
-				_ = sem.Acquire(context.TODO(), 1)
+				if err := sem.Acquire(ctx, 1); err != nil {
+					ylogger.Zero.Warn().Err(err).Int("remaining", len(objectMetas)-i).Msg("semaphore acquire failed (context cancelled), adding remaining files to failed")
+					my.Lock()
+					failed = append(failed, objectMetas[i:]...)
+					my.Unlock()
+					break
+				}
 				wg.Add(1)
 
 				go func(i int) {
@@ -299,21 +335,22 @@ func ProcessCopyExtended(
 
 					// If keys are equal, try performing server-side copy
 					if ssCopy {
-						if err := s.CopyObject(
+						if copyErr := s.CopyObject(ctx,
 							path,
 							path,
 							sourceInstanceCnf.StorageCnf.StoragePrefix,
 							sourceInstanceCnf.StorageCnf.StorageBucket,
 							/* XXX: we do copy always from source bucket to default bucket */
-							s.DefaultBucket()); err == nil {
+							s.DefaultBucket()); copyErr == nil {
 							return
+						} else {
+							ylogger.Zero.Error().Err(copyErr).Msg("failed server-side copy")
 						}
-						ylogger.Zero.Error().Err(err).Msg("failed server-side copy")
 					}
 
 					/* get reader */
 					readerFromOldBucket := yio.NewYRetryReader(
-						yio.NewRestartReader(oldStorage, path, nil), ycl)
+						yio.NewRestartReader(ctx, oldStorage, path, nil), ycl)
 					var fromReader io.Reader
 					fromReader = readerFromOldBucket
 					defer func() { _ = readerFromOldBucket.Close() }()
@@ -379,7 +416,7 @@ func ProcessCopyExtended(
 					}()
 
 					//write file
-					err = s.PutFileToDest(path, readerEncrypt, nil)
+					err = s.PutFileToDest(ctx, path, readerEncrypt, nil)
 					if err != nil {
 						ylogger.Zero.Error().Err(err).Msg("failed to upload file")
 						my.Lock()
@@ -425,7 +462,7 @@ func ProcessCopyExtended(
 	return nil
 }
 
-func ProcessDeleteExtended(msg message.DeleteMessage, s storage.StorageInteractor, bs storage.StorageInteractor, ycl client.YproxyClient, cnf *config.Vacuum) error {
+func ProcessDeleteExtended(ctx context.Context, msg message.DeleteMessage, s storage.StorageInteractor, bs storage.StorageInteractor, ycl client.YproxyClient, cnf *config.Vacuum) error {
 	ycl.SetExternalFilePath(msg.Name)
 
 	dbInterractor := &database.DatabaseHandler{}
@@ -453,14 +490,14 @@ func ProcessDeleteExtended(msg message.DeleteMessage, s storage.StorageInteracto
 	}
 
 	if msg.Garbage {
-		err := dh.HandleDeleteGarbage(msg)
+		err := dh.HandleDeleteGarbage(ctx, msg)
 		if err != nil {
 			_ = ycl.ReplyError(err, "failed to finish operation")
 			return err
 		}
 	} else {
 		/* Todo: resolve bucket here */
-		err := dh.HandleDeleteFile(msg)
+		err := dh.HandleDeleteFile(ctx, msg)
 		if err != nil {
 			_ = ycl.ReplyError(err, "failed to finish operation")
 			return err
@@ -482,7 +519,7 @@ func ProcessDeleteExtended(msg message.DeleteMessage, s storage.StorageInteracto
 	return nil
 }
 
-func ProcessDelete2Extended(msg message.Delete2Message, s storage.StorageInteractor, bs storage.StorageInteractor, ycl client.YproxyClient, cnf *config.Vacuum) error {
+func ProcessDelete2Extended(ctx context.Context, msg message.Delete2Message, s storage.StorageInteractor, bs storage.StorageInteractor, ycl client.YproxyClient, cnf *config.Vacuum) error {
 	ycl.SetExternalFilePath(msg.Prefix)
 
 	dbInterractor := &database.DatabaseHandler{}
@@ -504,7 +541,7 @@ func ProcessDelete2Extended(msg message.Delete2Message, s storage.StorageInterac
 			Str("Name", msg.Prefix).
 			Bool("confirm", msg.Confirm).Msg("requested to delete any files")
 	}
-	err := dh.HandleDelete2Prefix(msg)
+	err := dh.HandleDelete2Prefix(ctx, msg)
 	if err != nil {
 		_ = ycl.ReplyError(err, "failed to finish operation")
 		return err
@@ -525,7 +562,7 @@ func ProcessDelete2Extended(msg message.Delete2Message, s storage.StorageInterac
 	return nil
 }
 
-func ProcessUntrashify(msg message.UntrashifyMessage, s storage.StorageInteractor, bs storage.StorageInteractor, ycl client.YproxyClient) error {
+func ProcessUntrashify(ctx context.Context, msg message.UntrashifyMessage, s storage.StorageInteractor, bs storage.StorageInteractor, ycl client.YproxyClient) error {
 	ycl.SetExternalFilePath(msg.Name)
 
 	dbInterractor := &database.DatabaseHandler{}
@@ -543,7 +580,7 @@ func ProcessUntrashify(msg message.UntrashifyMessage, s storage.StorageInteracto
 		Uint64("segment", msg.Segnum).
 		Bool("confirm", msg.Confirm).Msg("requested to perform untrashify")
 
-	if err := dh.HandleUntrashifyFile(msg); err != nil {
+	if err := dh.HandleUntrashifyFile(ctx, msg); err != nil {
 		_ = ycl.ReplyError(err, "failed to upload")
 		return err
 	}
@@ -562,10 +599,10 @@ func ProcessUntrashify(msg message.UntrashifyMessage, s storage.StorageInteracto
 	return nil
 }
 
-func ProcessCollectObsolete(msg message.CollectObsoleteMessage, s storage.StorageInteractor, ycl client.YproxyClient) error {
+func ProcessCollectObsolete(ctx context.Context, msg message.CollectObsoleteMessage, s storage.StorageInteractor, ycl client.YproxyClient) error {
 	dh := database.DatabaseHandler{}
 
-	files, err := s.ListPath(msg.Message, true, nil)
+	files, err := s.ListPath(ctx, msg.Message, true, nil)
 	ylogger.Zero.Debug().Int("files count", len(files)).Msg("listed")
 	if err != nil {
 		_ = ycl.ReplyError(err, "failed list path")
@@ -616,7 +653,7 @@ func ProcessCollectObsolete(msg message.CollectObsoleteMessage, s storage.Storag
 	return nil
 }
 
-func ProcessDeleteObsolete(msg message.DeleteObsoleteMessage, s storage.StorageInteractor, bs storage.StorageInteractor, ycl client.YproxyClient) error {
+func ProcessDeleteObsolete(ctx context.Context, msg message.DeleteObsoleteMessage, s storage.StorageInteractor, bs storage.StorageInteractor, ycl client.YproxyClient) error {
 	bh := &backups.StorageBackupInteractor{Storage: bs}
 
 	dh := database.DatabaseHandler{}
@@ -624,7 +661,7 @@ func ProcessDeleteObsolete(msg message.DeleteObsoleteMessage, s storage.StorageI
 	if err != nil {
 		return err
 	}
-	first_backup_lsn, err := bh.GetFirstLSN(msg.Segnum)
+	first_backup_lsn, err := bh.GetFirstLSN(ctx, msg.Segnum)
 	if err != nil {
 		return err
 	}
@@ -670,7 +707,7 @@ func ProcessDeleteObsolete(msg message.DeleteObsoleteMessage, s storage.StorageI
 		}
 
 		// TODO make deletion if crazy_drop
-		err = s.MoveObject(s.DefaultBucket(), str, "/trash"+str)
+		err = s.MoveObject(ctx, s.DefaultBucket(), str, "/trash"+str)
 		if err != nil {
 			ylogger.Zero.Debug().Err(err).Str("delete candidate", str).Msg("not moved to trash")
 
@@ -687,6 +724,9 @@ func ProcConn(s storage.StorageInteractor, bs storage.StorageInteractor, cr cryp
 	defer func() {
 		_ = ycl.Close()
 	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	pr := NewProtoReader(ycl)
 	tp, body, err := pr.ReadPacket()
@@ -706,7 +746,7 @@ func ProcConn(s storage.StorageInteractor, bs storage.StorageInteractor, cr cryp
 		msg := message.CatMessage{}
 		msg.Decode(body)
 
-		if err := ProcessCatExtended(s, pr, msg.Name, msg.Decrypt, false, msg.StartOffset, nil, cr, ycl); err != nil {
+		if err := ProcessCatExtended(ctx, s, pr, msg.Name, msg.Decrypt, false, msg.StartOffset, nil, cr, ycl); err != nil {
 			return err
 		}
 
@@ -715,7 +755,7 @@ func ProcConn(s storage.StorageInteractor, bs storage.StorageInteractor, cr cryp
 		msg := message.CatMessageV2{}
 		msg.Decode(body)
 
-		if err := ProcessCatExtended(s, pr, msg.Name, msg.Decrypt, msg.KEK, msg.StartOffset, msg.Settings, cr, ycl); err != nil {
+		if err := ProcessCatExtended(ctx, s, pr, msg.Name, msg.Decrypt, msg.KEK, msg.StartOffset, msg.Settings, cr, ycl); err != nil {
 			return err
 		}
 
@@ -724,7 +764,7 @@ func ProcConn(s storage.StorageInteractor, bs storage.StorageInteractor, cr cryp
 		msg := message.PutMessage{}
 		msg.Decode(body)
 
-		if err := ProcessPutExtended(s, pr, msg.Name, msg.Encrypt, nil, cr, ycl, false); err != nil {
+		if err := ProcessPutExtended(ctx, s, pr, msg.Name, msg.Encrypt, nil, cr, ycl, false); err != nil {
 			return err
 		}
 
@@ -733,7 +773,7 @@ func ProcConn(s storage.StorageInteractor, bs storage.StorageInteractor, cr cryp
 		msg := message.PutMessageV2{}
 		msg.Decode(body)
 
-		if err := ProcessPutExtended(s, pr, msg.Name, msg.Encrypt, msg.Settings, cr, ycl, false); err != nil {
+		if err := ProcessPutExtended(ctx, s, pr, msg.Name, msg.Encrypt, msg.Settings, cr, ycl, false); err != nil {
 			return err
 		}
 
@@ -741,7 +781,7 @@ func ProcConn(s storage.StorageInteractor, bs storage.StorageInteractor, cr cryp
 		msg := message.PutMessageV3{}
 		msg.Decode(body)
 
-		if err := ProcessPutExtended(s, pr, msg.Name, msg.Encrypt, msg.Settings, cr, ycl, true); err != nil {
+		if err := ProcessPutExtended(ctx, s, pr, msg.Name, msg.Encrypt, msg.Settings, cr, ycl, true); err != nil {
 			return err
 		}
 
@@ -749,7 +789,7 @@ func ProcConn(s storage.StorageInteractor, bs storage.StorageInteractor, cr cryp
 		msg := message.ListMessage{}
 		msg.Decode(body)
 
-		err := ProcessListExtended(msg.Prefix, nil, s, cr, ycl, cnf)
+		err := ProcessListExtended(ctx, msg.Prefix, nil, s, cr, ycl, cnf)
 		if err != nil {
 			return err
 		}
@@ -761,7 +801,7 @@ func ProcConn(s storage.StorageInteractor, bs storage.StorageInteractor, cr cryp
 			ylogger.Zero.Debug().Str("name", s.Name).Str("value", s.Value).Msg("list request setting")
 		}
 
-		err := ProcessListExtended(msg.Prefix, msg.Settings, s, cr, ycl, cnf)
+		err := ProcessListExtended(ctx, msg.Prefix, msg.Settings, s, cr, ycl, cnf)
 		if err != nil {
 			return err
 		}
@@ -770,7 +810,7 @@ func ProcConn(s storage.StorageInteractor, bs storage.StorageInteractor, cr cryp
 		msg := message.CopyMessage{}
 		msg.Decode(body)
 
-		err := ProcessCopyExtended(
+		err := ProcessCopyExtended(ctx,
 			msg.Name,
 			msg.OldCfgPath,
 			msg.Port,
@@ -789,7 +829,7 @@ func ProcConn(s storage.StorageInteractor, bs storage.StorageInteractor, cr cryp
 		msg := message.CopyMessageV2{}
 		msg.Decode(body)
 
-		err := ProcessCopyExtended(
+		err := ProcessCopyExtended(ctx,
 			msg.Name,
 			msg.OldCfgPath,
 			msg.Port,
@@ -808,14 +848,14 @@ func ProcConn(s storage.StorageInteractor, bs storage.StorageInteractor, cr cryp
 		// receive message
 		msg := message.DeleteMessage{}
 		msg.Decode(body)
-		err := ProcessDeleteExtended(msg, s, bs, ycl, cnf)
+		err := ProcessDeleteExtended(ctx, msg, s, bs, ycl, cnf)
 		if err != nil {
 			return err
 		}
 	case message.MessageTypeDelete2:
 		msg := message.Delete2Message{}
 		msg.Decode(body)
-		err := ProcessDelete2Extended(msg, s, bs, ycl, cnf)
+		err := ProcessDelete2Extended(ctx, msg, s, bs, ycl, cnf)
 		if err != nil {
 			return err
 		}
@@ -823,7 +863,7 @@ func ProcConn(s storage.StorageInteractor, bs storage.StorageInteractor, cr cryp
 		// receive message
 		msg := message.UntrashifyMessage{}
 		msg.Decode(body)
-		err := ProcessUntrashify(msg, s, bs, ycl)
+		err := ProcessUntrashify(ctx, msg, s, bs, ycl)
 		if err != nil {
 			return err
 		}
@@ -834,13 +874,13 @@ func ProcConn(s storage.StorageInteractor, bs storage.StorageInteractor, cr cryp
 	case message.MessageCollectObsolete:
 		msg := message.CollectObsoleteMessage{}
 		msg.Decode(body)
-		if err := ProcessCollectObsolete(msg, s, ycl); err != nil {
+		if err := ProcessCollectObsolete(ctx, msg, s, ycl); err != nil {
 			return err
 		}
 	case message.MessageDeleteObsolete:
 		msg := message.DeleteObsoleteMessage{}
 		msg.Decode(body)
-		if err := ProcessDeleteObsolete(msg, s, bs, ycl); err != nil {
+		if err := ProcessDeleteObsolete(ctx, msg, s, bs, ycl); err != nil {
 			return err
 		}
 
@@ -883,8 +923,8 @@ func ProcMotion(s storage.StorageInteractor, cr crypt.Crypter, ycl client.Yproxy
 	return nil
 }
 
-func ListFilesToCopy(prefix string, port uint64, cfg config.Storage, src storage.StorageLister, dst storage.StorageLister) ([]*object.ObjectInfo, []*object.ObjectInfo, error) {
-	objectMetas, err := src.ListPath(prefix, true, nil)
+func ListFilesToCopy(ctx context.Context, prefix string, port uint64, cfg config.Storage, src storage.StorageLister, dst storage.StorageLister) ([]*object.ObjectInfo, []*object.ObjectInfo, error) {
+	objectMetas, err := src.ListPath(ctx, prefix, true, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -895,7 +935,7 @@ func ListFilesToCopy(prefix string, port uint64, cfg config.Storage, src storage
 		return nil, nil, err
 	}
 
-	copied, err := dst.ListPath(prefix, false, nil)
+	copied, err := dst.ListPath(ctx, prefix, false, nil)
 	if err != nil {
 		return nil, nil, err
 	}

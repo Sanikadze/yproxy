@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/fs"
@@ -22,8 +23,8 @@ type FileStorageInteractor struct {
 }
 
 // ListBucketPath implements StorageInteractor.
-func (s *FileStorageInteractor) ListBucketPath(bucket string, prefix string, useCache bool) ([]*object.ObjectInfo, error) {
-	return s.ListPath(prefix, false, nil)
+func (s *FileStorageInteractor) ListBucketPath(_ context.Context, bucket string, prefix string, useCache bool) ([]*object.ObjectInfo, error) {
+	return s.ListPath(context.Background(), prefix, false, nil)
 }
 
 // ListBuckets implements StorageInteractor.
@@ -43,7 +44,7 @@ func (s *FileStorageInteractor) DefaultBucket() string {
 
 var _ StorageInteractor = &FileStorageInteractor{}
 
-func (s *FileStorageInteractor) CatFileFromStorage(name string, offset int64, _ []settings.StorageSettings) (io.ReadCloser, error) {
+func (s *FileStorageInteractor) CatFileFromStorage(_ context.Context, name string, offset int64, _ []settings.StorageSettings) (io.ReadCloser, error) {
 	file, err := os.Open(path.Join(s.cnf.StoragePrefix, name))
 	if err != nil {
 		return nil, err
@@ -51,7 +52,7 @@ func (s *FileStorageInteractor) CatFileFromStorage(name string, offset int64, _ 
 	_, err = io.CopyN(io.Discard, file, offset)
 	return file, err
 }
-func (s *FileStorageInteractor) ListPath(prefix string, _ bool, _ []settings.StorageSettings) ([]*object.ObjectInfo, error) {
+func (s *FileStorageInteractor) ListPath(_ context.Context, prefix string, _ bool, _ []settings.StorageSettings) ([]*object.ObjectInfo, error) {
 	var data []*object.ObjectInfo
 	err := filepath.WalkDir(s.cnf.StoragePrefix, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -64,6 +65,7 @@ func (s *FileStorageInteractor) ListPath(prefix string, _ bool, _ []settings.Sto
 		if err != nil {
 			return err
 		}
+		defer file.Close()
 		fileinfo, err := file.Stat()
 		if err != nil {
 			return err
@@ -85,7 +87,7 @@ func (s *FileStorageInteractor) ListPath(prefix string, _ bool, _ []settings.Sto
 	return data, err
 }
 
-func (s *FileStorageInteractor) PutFileToDest(name string, r io.Reader, _ []settings.StorageSettings) error {
+func (s *FileStorageInteractor) PutFileToDest(_ context.Context, name string, r io.Reader, _ []settings.StorageSettings) error {
 	fPath := path.Join(s.cnf.StoragePrefix, name)
 	fDir := path.Dir(fPath)
 	if err := os.MkdirAll(fDir, 0700); err != nil {
@@ -95,16 +97,17 @@ func (s *FileStorageInteractor) PutFileToDest(name string, r io.Reader, _ []sett
 	if err != nil {
 		return err
 	}
+	defer file.Close()
 	_, err = io.Copy(file, r)
 	return err
 }
 
-func (s *FileStorageInteractor) PatchFile(name string, r io.ReadSeeker, startOffset int64) error {
+func (s *FileStorageInteractor) PatchFile(_ context.Context, name string, r io.ReadSeeker, startOffset int64) error {
 	//UNUSED TODO
 	return fmt.Errorf("TODO")
 }
 
-func (s *FileStorageInteractor) MoveObject(_ /*bucket*/, from string, to string) error {
+func (s *FileStorageInteractor) MoveObject(_ context.Context, _ /*bucket*/ string, from string, to string) error {
 	fromPath := path.Join(s.cnf.StoragePrefix, from)
 	toPath := path.Join(s.cnf.StoragePrefix, to)
 	if fromPath == toPath {
@@ -117,7 +120,7 @@ func (s *FileStorageInteractor) MoveObject(_ /*bucket*/, from string, to string)
 	return os.Rename(fromPath, toPath)
 }
 
-func (s *FileStorageInteractor) CopyObject(from, to, fromStoragePrefix, _, _ string) error {
+func (s *FileStorageInteractor) CopyObject(_ context.Context, from, to, fromStoragePrefix, _, _ string) error {
 	fromPath := path.Join(fromStoragePrefix, from)
 	toPath := path.Join(s.cnf.StoragePrefix, to)
 	toDir := path.Dir(toPath)
@@ -128,15 +131,17 @@ func (s *FileStorageInteractor) CopyObject(from, to, fromStoragePrefix, _, _ str
 	if err != nil {
 		return err
 	}
+	defer fromFile.Close()
 	toFile, err := os.OpenFile(toPath, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(fromFile, toFile)
+	defer toFile.Close()
+	_, err = io.Copy(toFile, fromFile)
 	return err
 }
 
-func (s *FileStorageInteractor) DeleteObject(_ /*bucket*/, key string) error {
+func (s *FileStorageInteractor) DeleteObject(_ context.Context, _ /*bucket*/ string, key string) error {
 	return os.Remove(path.Join(s.cnf.StoragePrefix, key))
 }
 
@@ -144,10 +149,10 @@ func (s *FileStorageInteractor) AbortMultipartUploads() error {
 	return nil
 }
 
-func (s *FileStorageInteractor) AbortMultipartUpload(bucket, key, uploadId string) error {
+func (s *FileStorageInteractor) AbortMultipartUpload(_ context.Context, bucket, key, uploadId string) error {
 	return nil
 }
 
-func (s *FileStorageInteractor) ListFailedMultipartUploads(string) (map[string]string, error) {
+func (s *FileStorageInteractor) ListFailedMultipartUploads(_ context.Context, _ string) (map[string]string, error) {
 	return nil, nil
 }

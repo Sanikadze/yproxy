@@ -10,6 +10,7 @@
 package mock
 
 import (
+	context "context"
 	io "io"
 	reflect "reflect"
 
@@ -43,18 +44,18 @@ func (m *MockStorageReader) EXPECT() *MockStorageReaderMockRecorder {
 }
 
 // CatFileFromStorage mocks base method.
-func (m *MockStorageReader) CatFileFromStorage(name string, offset int64, setts []settings.StorageSettings) (io.ReadCloser, error) {
+func (m *MockStorageReader) CatFileFromStorage(ctx context.Context, name string, offset int64, setts []settings.StorageSettings) (io.ReadCloser, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CatFileFromStorage", name, offset, setts)
+	ret := m.ctrl.Call(m, "CatFileFromStorage", ctx, name, offset, setts)
 	ret0, _ := ret[0].(io.ReadCloser)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // CatFileFromStorage indicates an expected call of CatFileFromStorage.
-func (mr *MockStorageReaderMockRecorder) CatFileFromStorage(name, offset, setts any) *gomock.Call {
+func (mr *MockStorageReaderMockRecorder) CatFileFromStorage(ctx, name, offset, setts any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CatFileFromStorage", reflect.TypeOf((*MockStorageReader)(nil).CatFileFromStorage), name, offset, setts)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CatFileFromStorage", reflect.TypeOf((*MockStorageReader)(nil).CatFileFromStorage), ctx, name, offset, setts)
 }
 
 // MockStorageWriter is a mock of StorageWriter interface.
@@ -82,31 +83,31 @@ func (m *MockStorageWriter) EXPECT() *MockStorageWriterMockRecorder {
 }
 
 // PatchFile mocks base method.
-func (m *MockStorageWriter) PatchFile(name string, r io.ReadSeeker, startOffset int64) error {
+func (m *MockStorageWriter) PatchFile(ctx context.Context, name string, r io.ReadSeeker, startOffset int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PatchFile", name, r, startOffset)
+	ret := m.ctrl.Call(m, "PatchFile", ctx, name, r, startOffset)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // PatchFile indicates an expected call of PatchFile.
-func (mr *MockStorageWriterMockRecorder) PatchFile(name, r, startOffset any) *gomock.Call {
+func (mr *MockStorageWriterMockRecorder) PatchFile(ctx, name, r, startOffset any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PatchFile", reflect.TypeOf((*MockStorageWriter)(nil).PatchFile), name, r, startOffset)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PatchFile", reflect.TypeOf((*MockStorageWriter)(nil).PatchFile), ctx, name, r, startOffset)
 }
 
 // PutFileToDest mocks base method.
-func (m *MockStorageWriter) PutFileToDest(name string, r io.Reader, settings []settings.StorageSettings) error {
+func (m *MockStorageWriter) PutFileToDest(ctx context.Context, name string, r io.Reader, settings []settings.StorageSettings) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PutFileToDest", name, r, settings)
+	ret := m.ctrl.Call(m, "PutFileToDest", ctx, name, r, settings)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // PutFileToDest indicates an expected call of PutFileToDest.
-func (mr *MockStorageWriterMockRecorder) PutFileToDest(name, r, settings any) *gomock.Call {
+func (mr *MockStorageWriterMockRecorder) PutFileToDest(ctx, name, r, settings any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PutFileToDest", reflect.TypeOf((*MockStorageWriter)(nil).PutFileToDest), name, r, settings)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PutFileToDest", reflect.TypeOf((*MockStorageWriter)(nil).PutFileToDest), ctx, name, r, settings)
 }
 
 // MockStorageLister is a mock of StorageLister interface.
@@ -134,48 +135,48 @@ func (m *MockStorageLister) EXPECT() *MockStorageListerMockRecorder {
 }
 
 // ListBucketPath mocks base method.
-func (m *MockStorageLister) ListBucketPath(bucket, prefix string, useCache bool) ([]*object.ObjectInfo, error) {
+func (m *MockStorageLister) ListBucketPath(ctx context.Context, bucket, prefix string, useCache bool) ([]*object.ObjectInfo, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListBucketPath", bucket, prefix, useCache)
+	ret := m.ctrl.Call(m, "ListBucketPath", ctx, bucket, prefix, useCache)
 	ret0, _ := ret[0].([]*object.ObjectInfo)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListBucketPath indicates an expected call of ListBucketPath.
-func (mr *MockStorageListerMockRecorder) ListBucketPath(bucket, prefix, useCache any) *gomock.Call {
+func (mr *MockStorageListerMockRecorder) ListBucketPath(ctx, bucket, prefix, useCache any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBucketPath", reflect.TypeOf((*MockStorageLister)(nil).ListBucketPath), bucket, prefix, useCache)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBucketPath", reflect.TypeOf((*MockStorageLister)(nil).ListBucketPath), ctx, bucket, prefix, useCache)
 }
 
 // ListFailedMultipartUploads mocks base method.
-func (m *MockStorageLister) ListFailedMultipartUploads(bucket string) (map[string]string, error) {
+func (m *MockStorageLister) ListFailedMultipartUploads(ctx context.Context, bucket string) (map[string]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListFailedMultipartUploads", bucket)
+	ret := m.ctrl.Call(m, "ListFailedMultipartUploads", ctx, bucket)
 	ret0, _ := ret[0].(map[string]string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListFailedMultipartUploads indicates an expected call of ListFailedMultipartUploads.
-func (mr *MockStorageListerMockRecorder) ListFailedMultipartUploads(bucket any) *gomock.Call {
+func (mr *MockStorageListerMockRecorder) ListFailedMultipartUploads(ctx, bucket any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListFailedMultipartUploads", reflect.TypeOf((*MockStorageLister)(nil).ListFailedMultipartUploads), bucket)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListFailedMultipartUploads", reflect.TypeOf((*MockStorageLister)(nil).ListFailedMultipartUploads), ctx, bucket)
 }
 
 // ListPath mocks base method.
-func (m *MockStorageLister) ListPath(prefix string, useCache bool, settings []settings.StorageSettings) ([]*object.ObjectInfo, error) {
+func (m *MockStorageLister) ListPath(ctx context.Context, prefix string, useCache bool, settings []settings.StorageSettings) ([]*object.ObjectInfo, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListPath", prefix, useCache, settings)
+	ret := m.ctrl.Call(m, "ListPath", ctx, prefix, useCache, settings)
 	ret0, _ := ret[0].([]*object.ObjectInfo)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListPath indicates an expected call of ListPath.
-func (mr *MockStorageListerMockRecorder) ListPath(prefix, useCache, settings any) *gomock.Call {
+func (mr *MockStorageListerMockRecorder) ListPath(ctx, prefix, useCache, settings any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPath", reflect.TypeOf((*MockStorageLister)(nil).ListPath), prefix, useCache, settings)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPath", reflect.TypeOf((*MockStorageLister)(nil).ListPath), ctx, prefix, useCache, settings)
 }
 
 // MockStorageMover is a mock of StorageMover interface.
@@ -203,45 +204,45 @@ func (m *MockStorageMover) EXPECT() *MockStorageMoverMockRecorder {
 }
 
 // AbortMultipartUpload mocks base method.
-func (m *MockStorageMover) AbortMultipartUpload(bucket, key, uploadId string) error {
+func (m *MockStorageMover) AbortMultipartUpload(ctx context.Context, bucket, key, uploadId string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AbortMultipartUpload", bucket, key, uploadId)
+	ret := m.ctrl.Call(m, "AbortMultipartUpload", ctx, bucket, key, uploadId)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // AbortMultipartUpload indicates an expected call of AbortMultipartUpload.
-func (mr *MockStorageMoverMockRecorder) AbortMultipartUpload(bucket, key, uploadId any) *gomock.Call {
+func (mr *MockStorageMoverMockRecorder) AbortMultipartUpload(ctx, bucket, key, uploadId any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AbortMultipartUpload", reflect.TypeOf((*MockStorageMover)(nil).AbortMultipartUpload), bucket, key, uploadId)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AbortMultipartUpload", reflect.TypeOf((*MockStorageMover)(nil).AbortMultipartUpload), ctx, bucket, key, uploadId)
 }
 
 // DeleteObject mocks base method.
-func (m *MockStorageMover) DeleteObject(bucket, key string) error {
+func (m *MockStorageMover) DeleteObject(ctx context.Context, bucket, key string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteObject", bucket, key)
+	ret := m.ctrl.Call(m, "DeleteObject", ctx, bucket, key)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // DeleteObject indicates an expected call of DeleteObject.
-func (mr *MockStorageMoverMockRecorder) DeleteObject(bucket, key any) *gomock.Call {
+func (mr *MockStorageMoverMockRecorder) DeleteObject(ctx, bucket, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObject", reflect.TypeOf((*MockStorageMover)(nil).DeleteObject), bucket, key)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObject", reflect.TypeOf((*MockStorageMover)(nil).DeleteObject), ctx, bucket, key)
 }
 
 // MoveObject mocks base method.
-func (m *MockStorageMover) MoveObject(bucket, from, to string) error {
+func (m *MockStorageMover) MoveObject(ctx context.Context, bucket, from, to string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MoveObject", bucket, from, to)
+	ret := m.ctrl.Call(m, "MoveObject", ctx, bucket, from, to)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // MoveObject indicates an expected call of MoveObject.
-func (mr *MockStorageMoverMockRecorder) MoveObject(bucket, from, to any) *gomock.Call {
+func (mr *MockStorageMoverMockRecorder) MoveObject(ctx, bucket, from, to any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObject", reflect.TypeOf((*MockStorageMover)(nil).MoveObject), bucket, from, to)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObject", reflect.TypeOf((*MockStorageMover)(nil).MoveObject), ctx, bucket, from, to)
 }
 
 // MockStorageCopier is a mock of StorageCopier interface.
@@ -269,17 +270,17 @@ func (m *MockStorageCopier) EXPECT() *MockStorageCopierMockRecorder {
 }
 
 // CopyObject mocks base method.
-func (m *MockStorageCopier) CopyObject(from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket string) error {
+func (m *MockStorageCopier) CopyObject(ctx context.Context, from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CopyObject", from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket)
+	ret := m.ctrl.Call(m, "CopyObject", ctx, from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CopyObject indicates an expected call of CopyObject.
-func (mr *MockStorageCopierMockRecorder) CopyObject(from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket any) *gomock.Call {
+func (mr *MockStorageCopierMockRecorder) CopyObject(ctx, from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CopyObject", reflect.TypeOf((*MockStorageCopier)(nil).CopyObject), from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CopyObject", reflect.TypeOf((*MockStorageCopier)(nil).CopyObject), ctx, from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket)
 }
 
 // MockStorageInteractor is a mock of StorageInteractor interface.
@@ -307,46 +308,46 @@ func (m *MockStorageInteractor) EXPECT() *MockStorageInteractorMockRecorder {
 }
 
 // AbortMultipartUpload mocks base method.
-func (m *MockStorageInteractor) AbortMultipartUpload(bucket, key, uploadId string) error {
+func (m *MockStorageInteractor) AbortMultipartUpload(ctx context.Context, bucket, key, uploadId string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AbortMultipartUpload", bucket, key, uploadId)
+	ret := m.ctrl.Call(m, "AbortMultipartUpload", ctx, bucket, key, uploadId)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // AbortMultipartUpload indicates an expected call of AbortMultipartUpload.
-func (mr *MockStorageInteractorMockRecorder) AbortMultipartUpload(bucket, key, uploadId any) *gomock.Call {
+func (mr *MockStorageInteractorMockRecorder) AbortMultipartUpload(ctx, bucket, key, uploadId any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AbortMultipartUpload", reflect.TypeOf((*MockStorageInteractor)(nil).AbortMultipartUpload), bucket, key, uploadId)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AbortMultipartUpload", reflect.TypeOf((*MockStorageInteractor)(nil).AbortMultipartUpload), ctx, bucket, key, uploadId)
 }
 
 // CatFileFromStorage mocks base method.
-func (m *MockStorageInteractor) CatFileFromStorage(name string, offset int64, setts []settings.StorageSettings) (io.ReadCloser, error) {
+func (m *MockStorageInteractor) CatFileFromStorage(ctx context.Context, name string, offset int64, setts []settings.StorageSettings) (io.ReadCloser, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CatFileFromStorage", name, offset, setts)
+	ret := m.ctrl.Call(m, "CatFileFromStorage", ctx, name, offset, setts)
 	ret0, _ := ret[0].(io.ReadCloser)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // CatFileFromStorage indicates an expected call of CatFileFromStorage.
-func (mr *MockStorageInteractorMockRecorder) CatFileFromStorage(name, offset, setts any) *gomock.Call {
+func (mr *MockStorageInteractorMockRecorder) CatFileFromStorage(ctx, name, offset, setts any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CatFileFromStorage", reflect.TypeOf((*MockStorageInteractor)(nil).CatFileFromStorage), name, offset, setts)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CatFileFromStorage", reflect.TypeOf((*MockStorageInteractor)(nil).CatFileFromStorage), ctx, name, offset, setts)
 }
 
 // CopyObject mocks base method.
-func (m *MockStorageInteractor) CopyObject(from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket string) error {
+func (m *MockStorageInteractor) CopyObject(ctx context.Context, from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CopyObject", from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket)
+	ret := m.ctrl.Call(m, "CopyObject", ctx, from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CopyObject indicates an expected call of CopyObject.
-func (mr *MockStorageInteractorMockRecorder) CopyObject(from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket any) *gomock.Call {
+func (mr *MockStorageInteractorMockRecorder) CopyObject(ctx, from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CopyObject", reflect.TypeOf((*MockStorageInteractor)(nil).CopyObject), from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CopyObject", reflect.TypeOf((*MockStorageInteractor)(nil).CopyObject), ctx, from, to, fromStoragePrefix, fromStorageBucket, toStorageBucket)
 }
 
 // DefaultBucket mocks base method.
@@ -364,32 +365,32 @@ func (mr *MockStorageInteractorMockRecorder) DefaultBucket() *gomock.Call {
 }
 
 // DeleteObject mocks base method.
-func (m *MockStorageInteractor) DeleteObject(bucket, key string) error {
+func (m *MockStorageInteractor) DeleteObject(ctx context.Context, bucket, key string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteObject", bucket, key)
+	ret := m.ctrl.Call(m, "DeleteObject", ctx, bucket, key)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // DeleteObject indicates an expected call of DeleteObject.
-func (mr *MockStorageInteractorMockRecorder) DeleteObject(bucket, key any) *gomock.Call {
+func (mr *MockStorageInteractorMockRecorder) DeleteObject(ctx, bucket, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObject", reflect.TypeOf((*MockStorageInteractor)(nil).DeleteObject), bucket, key)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObject", reflect.TypeOf((*MockStorageInteractor)(nil).DeleteObject), ctx, bucket, key)
 }
 
 // ListBucketPath mocks base method.
-func (m *MockStorageInteractor) ListBucketPath(bucket, prefix string, useCache bool) ([]*object.ObjectInfo, error) {
+func (m *MockStorageInteractor) ListBucketPath(ctx context.Context, bucket, prefix string, useCache bool) ([]*object.ObjectInfo, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListBucketPath", bucket, prefix, useCache)
+	ret := m.ctrl.Call(m, "ListBucketPath", ctx, bucket, prefix, useCache)
 	ret0, _ := ret[0].([]*object.ObjectInfo)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListBucketPath indicates an expected call of ListBucketPath.
-func (mr *MockStorageInteractorMockRecorder) ListBucketPath(bucket, prefix, useCache any) *gomock.Call {
+func (mr *MockStorageInteractorMockRecorder) ListBucketPath(ctx, bucket, prefix, useCache any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBucketPath", reflect.TypeOf((*MockStorageInteractor)(nil).ListBucketPath), bucket, prefix, useCache)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBucketPath", reflect.TypeOf((*MockStorageInteractor)(nil).ListBucketPath), ctx, bucket, prefix, useCache)
 }
 
 // ListBuckets mocks base method.
@@ -407,73 +408,73 @@ func (mr *MockStorageInteractorMockRecorder) ListBuckets() *gomock.Call {
 }
 
 // ListFailedMultipartUploads mocks base method.
-func (m *MockStorageInteractor) ListFailedMultipartUploads(bucket string) (map[string]string, error) {
+func (m *MockStorageInteractor) ListFailedMultipartUploads(ctx context.Context, bucket string) (map[string]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListFailedMultipartUploads", bucket)
+	ret := m.ctrl.Call(m, "ListFailedMultipartUploads", ctx, bucket)
 	ret0, _ := ret[0].(map[string]string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListFailedMultipartUploads indicates an expected call of ListFailedMultipartUploads.
-func (mr *MockStorageInteractorMockRecorder) ListFailedMultipartUploads(bucket any) *gomock.Call {
+func (mr *MockStorageInteractorMockRecorder) ListFailedMultipartUploads(ctx, bucket any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListFailedMultipartUploads", reflect.TypeOf((*MockStorageInteractor)(nil).ListFailedMultipartUploads), bucket)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListFailedMultipartUploads", reflect.TypeOf((*MockStorageInteractor)(nil).ListFailedMultipartUploads), ctx, bucket)
 }
 
 // ListPath mocks base method.
-func (m *MockStorageInteractor) ListPath(prefix string, useCache bool, settings []settings.StorageSettings) ([]*object.ObjectInfo, error) {
+func (m *MockStorageInteractor) ListPath(ctx context.Context, prefix string, useCache bool, settings []settings.StorageSettings) ([]*object.ObjectInfo, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListPath", prefix, useCache, settings)
+	ret := m.ctrl.Call(m, "ListPath", ctx, prefix, useCache, settings)
 	ret0, _ := ret[0].([]*object.ObjectInfo)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListPath indicates an expected call of ListPath.
-func (mr *MockStorageInteractorMockRecorder) ListPath(prefix, useCache, settings any) *gomock.Call {
+func (mr *MockStorageInteractorMockRecorder) ListPath(ctx, prefix, useCache, settings any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPath", reflect.TypeOf((*MockStorageInteractor)(nil).ListPath), prefix, useCache, settings)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPath", reflect.TypeOf((*MockStorageInteractor)(nil).ListPath), ctx, prefix, useCache, settings)
 }
 
 // MoveObject mocks base method.
-func (m *MockStorageInteractor) MoveObject(bucket, from, to string) error {
+func (m *MockStorageInteractor) MoveObject(ctx context.Context, bucket, from, to string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MoveObject", bucket, from, to)
+	ret := m.ctrl.Call(m, "MoveObject", ctx, bucket, from, to)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // MoveObject indicates an expected call of MoveObject.
-func (mr *MockStorageInteractorMockRecorder) MoveObject(bucket, from, to any) *gomock.Call {
+func (mr *MockStorageInteractorMockRecorder) MoveObject(ctx, bucket, from, to any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObject", reflect.TypeOf((*MockStorageInteractor)(nil).MoveObject), bucket, from, to)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObject", reflect.TypeOf((*MockStorageInteractor)(nil).MoveObject), ctx, bucket, from, to)
 }
 
 // PatchFile mocks base method.
-func (m *MockStorageInteractor) PatchFile(name string, r io.ReadSeeker, startOffset int64) error {
+func (m *MockStorageInteractor) PatchFile(ctx context.Context, name string, r io.ReadSeeker, startOffset int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PatchFile", name, r, startOffset)
+	ret := m.ctrl.Call(m, "PatchFile", ctx, name, r, startOffset)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // PatchFile indicates an expected call of PatchFile.
-func (mr *MockStorageInteractorMockRecorder) PatchFile(name, r, startOffset any) *gomock.Call {
+func (mr *MockStorageInteractorMockRecorder) PatchFile(ctx, name, r, startOffset any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PatchFile", reflect.TypeOf((*MockStorageInteractor)(nil).PatchFile), name, r, startOffset)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PatchFile", reflect.TypeOf((*MockStorageInteractor)(nil).PatchFile), ctx, name, r, startOffset)
 }
 
 // PutFileToDest mocks base method.
-func (m *MockStorageInteractor) PutFileToDest(name string, r io.Reader, settings []settings.StorageSettings) error {
+func (m *MockStorageInteractor) PutFileToDest(ctx context.Context, name string, r io.Reader, settings []settings.StorageSettings) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PutFileToDest", name, r, settings)
+	ret := m.ctrl.Call(m, "PutFileToDest", ctx, name, r, settings)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // PutFileToDest indicates an expected call of PutFileToDest.
-func (mr *MockStorageInteractorMockRecorder) PutFileToDest(name, r, settings any) *gomock.Call {
+func (mr *MockStorageInteractorMockRecorder) PutFileToDest(ctx, name, r, settings any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PutFileToDest", reflect.TypeOf((*MockStorageInteractor)(nil).PutFileToDest), name, r, settings)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PutFileToDest", reflect.TypeOf((*MockStorageInteractor)(nil).PutFileToDest), ctx, name, r, settings)
 }
